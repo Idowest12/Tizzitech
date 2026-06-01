@@ -7,8 +7,8 @@ interface AuthModalProps {
 }
 
 export function AuthModal({ onClose }: AuthModalProps) {
-  const { signInWithGoogle, registerWithEmail, loginWithEmail, resetPassword } = useAuth();
-  const [isLogin, setIsLogin] = useState(true);
+  const { signInWithGoogle, registerWithEmail, loginWithEmail, resetPassword, user } = useAuth();
+  const [isLogin, setIsLogin] = useState(false);
   const [isReset, setIsReset] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   
@@ -88,12 +88,14 @@ export function AuthModal({ onClose }: AuthModalProps) {
       <div 
         className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]"
       >
-        <button 
-          onClick={onClose}
-          className="absolute top-4 right-4 p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-full transition-colors z-10"
-        >
-          <X className="w-5 h-5" />
-        </button>
+        {user && (
+          <button 
+            onClick={onClose}
+            className="absolute top-4 right-4 p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-full transition-colors z-10"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        )}
         
         <div className="p-6 md:p-8 overflow-y-auto">
             <div className="text-center mb-8">

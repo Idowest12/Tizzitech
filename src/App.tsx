@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { Menu, ChevronDown, SlidersHorizontal } from "lucide-react";
+import { Menu, ChevronDown, SlidersHorizontal, Lock } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "./components/Header";
 import { ProductCard } from "./components/ProductCard";
@@ -253,6 +253,9 @@ export default function App() {
       if (view === "profile" || view === "tracking" || view === "admin") {
         setView("store");
       }
+      setIsAuthOpen(true);
+    } else {
+      setIsAuthOpen(false);
     }
   }, [user, view]);
 

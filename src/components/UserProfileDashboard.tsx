@@ -175,20 +175,6 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
     },
   ];
 
-  if (!user) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 text-center mx-auto max-w-md px-4 mt-12 bg-neutral-900 border border-neutral-800 rounded-3xl shadow-2xl">
-        <Shield className="w-16 h-16 text-neutral-600 mb-6" />
-        <h3 className="text-2xl font-black text-white mb-2 tracking-wide uppercase">
-          Not Authenticated
-        </h3>
-        <p className="text-neutral-400 mb-6">
-          Please sign in to view your account dashboard.
-        </p>
-      </div>
-    );
-  }
-
   // Profile update save callback
   const handleUpdateProfile = async () => {
     setIsSaving(true);
@@ -379,6 +365,7 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
     return { pending, processing, delivered, cancelled };
   }, [localOrders]);
 
+  // Tab contents omitted for brevity here, but stats & filteredOrders hooks should go first
   // Accordion drawer handler
   const toggleOrderExpansion = (orderId: string) => {
     setExpandedOrders((prev) => ({
@@ -435,7 +422,22 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
     return list;
   }, [localOrders, searchQuery, selectedStatusFilter]);
 
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center mx-auto max-w-md px-4 mt-12 bg-neutral-900 border border-neutral-800 rounded-3xl shadow-2xl">
+        <Shield className="w-16 h-16 text-neutral-600 mb-6" />
+        <h3 className="text-2xl font-black text-white mb-2 tracking-wide uppercase">
+          Not Authenticated
+        </h3>
+        <p className="text-neutral-400 mb-6">
+          Please sign in to view your account dashboard.
+        </p>
+      </div>
+    );
+  }
+
   const tabContents = () => (
+
     <>
       {/* TAB CONTENT: 1. Personal Info (Image 2 representation) */}
       {activeTab === "personal" && (
