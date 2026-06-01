@@ -69,6 +69,14 @@ export default function App() {
   >("store");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [pendingCheckout, setPendingCheckout] = useState(false);
+
+  useEffect(() => {
+    if (user && pendingCheckout) {
+      setView("checkout");
+      setPendingCheckout(false);
+    }
+  }, [user, pendingCheckout]);
 
   // Persistent Orders for User
   useEffect(() => {
@@ -253,9 +261,6 @@ export default function App() {
       if (view === "profile" || view === "tracking" || view === "admin") {
         setView("store");
       }
-      setIsAuthOpen(true);
-    } else {
-      setIsAuthOpen(false);
     }
   }, [user, view]);
 
@@ -810,13 +815,21 @@ export default function App() {
         removeFromCart={removeFromCart}
         onCheckout={() => {
           setIsCartOpen(false);
-          setView("checkout");
+          if (!user) {
+            setPendingCheckout(true);
+            setIsAuthOpen(true);
+          } else {
+            setView("checkout");
+          }
         }}
       />
 
       {/* Product details are handled on full-screen landing pages */}
 
-      {isAuthOpen && <AuthModal onClose={() => setIsAuthOpen(false)} />}
+      {isAuthOpen && <AuthModal onClose={() => {
+        setIsAuthOpen(false);
+        setPendingCheckout(false);
+      }} />}
     </div>
   );
 }
