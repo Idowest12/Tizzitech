@@ -1,0 +1,6 @@
+{
+  "name": "Tizzitech",
+  "description": "A high-performance tech e-commerce platform with inventory tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
