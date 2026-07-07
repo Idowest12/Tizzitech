@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import mysql from 'mysql2/promise';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
@@ -138,8 +137,20 @@ let firebaseDb: any = null;
 function getFirebaseDb() {
   if (firebaseDb) return firebaseDb;
   try {
-    const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-    if (!fs.existsSync(configPath)) {
+    const possiblePaths = [
+      path.join(process.cwd(), 'firebase-applet-config.json'),
+      path.join(process.cwd(), 'api', 'firebase-applet-config.json'),
+      path.join(process.cwd(), '..', 'firebase-applet-config.json')
+    ];
+    let configPath = '';
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        configPath = p;
+        break;
+      }
+    }
+
+    if (!configPath) {
       console.log('Firebase config tracking missing.');
       return null;
     }
@@ -1562,6 +1573,7 @@ async function boot() {
 
   // Vite integration middleware configuration
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const viteInstance = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa'

@@ -2,8 +2,8 @@ export class PaystackService {
   static getPublicKey(): string {
     const key = (import.meta as any).env?.VITE_PAYSTACK_PUBLIC_KEY;
     if (!key || key.trim() === '') {
-      console.warn("Paystack Public Key is missing! Add VITE_PAYSTACK_PUBLIC_KEY to your environment variables.");
-      return '';
+      console.warn("Paystack Public Key is missing! Add VITE_PAYSTACK_PUBLIC_KEY to your environment variables. Using test key.");
+      return 'pk_test_b8e217112ebde369baaa90fbdc9da3a763c87e14';
     }
     return key;
   }

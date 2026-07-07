@@ -142,10 +142,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     
     let data;
+    let text = '';
     try {
-      const text = await res.text();
+      text = await res.text();
       data = text ? JSON.parse(text) : { success: false, message: 'Registration server error.' };
     } catch(e) {
+      console.error("Failed to parse response:", text);
       data = { success: false, message: 'Server communication failed.' };
     }
 
@@ -168,10 +170,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     
     let data;
+    let text = '';
     try {
-      const text = await res.text();
+      text = await res.text();
       data = text ? JSON.parse(text) : { success: false, message: 'Invalid credentials or server error.' };
     } catch(e) {
+      console.error("Failed to parse response:", text);
       data = { success: false, message: 'Server communication failed.' };
     }
     
