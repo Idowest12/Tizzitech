@@ -1581,9 +1581,15 @@ async function boot() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Tizzitech Full-Stack backend running on port ${PORT}`);
-  });
+  if (!process.env.VERCEL) {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Tizzitech Full-Stack backend running on port ${PORT}`);
+    });
+  }
 }
 
-boot();
+if (!process.env.VERCEL) {
+  boot();
+}
+
+export default app;
