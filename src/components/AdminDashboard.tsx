@@ -67,7 +67,7 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
   const [newCondition, setNewCondition] = useState('');
   
   React.useEffect(() => {
-    getDoc(doc(db, 'settings', 'global')).then(snap => {
+    getDoc(doc(db, 'newsletter_campaigns', 'global_settings')).then(snap => {
       if(snap.exists()) {
         const d = snap.data();
         if(d.brands) setBrands(d.brands);
@@ -79,7 +79,7 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
   
   const saveSettings = async (b, c, z) => {
     try {
-      await setDoc(doc(db, 'settings', 'global'), { brands: b || brands, categories: c || conditions, deliveryZones: z || deliveryZones }, { merge: true });
+      await setDoc(doc(db, 'newsletter_campaigns', 'global_settings'), { brands: b || brands, categories: c || conditions, deliveryZones: z || deliveryZones }, { merge: true });
     } catch(e) {
       console.error(e);
     }
