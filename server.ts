@@ -1,3 +1,4 @@
+import fs from 'fs';
 import express from 'express';
 import path from 'path';
 import mysql from 'mysql2/promise';
@@ -65,7 +66,6 @@ const PORT = 3000;
 // Enable JSON middleware for parsing parsed body structures
 app.use(express.json());
 
-import fs from 'fs';
 app.use((req, res, next) => {
   next();
 });

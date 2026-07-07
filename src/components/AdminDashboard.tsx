@@ -61,7 +61,7 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
   }, [visits]);
 
   // Brands & Conditions state
-  const [brands, setBrands] = useState(['Apple', 'Samsung', 'Sony', 'Dell', 'Asus']);
+  const [brands, setBrands] = useState(['Apple', 'Samsung', 'Sony', 'Dell', 'Asus', 'iPhone', 'MacBook', 'HP', 'Lenovo']);
   const [conditions, setConditions] = useState(['Brand New', 'Like New', 'Excellent', 'Good', 'Fair']);
   const [newBrand, setNewBrand] = useState('');
   const [newCondition, setNewCondition] = useState('');
@@ -77,11 +77,87 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
     });
   }, []);
   
-  const saveSettings = async (b, z) => {
+  const saveSettings = async (b, c, z) => {
     try {
-      await setDoc(doc(db, 'settings', 'global'), { brands: b || brands, deliveryZones: z || deliveryZones }, { merge: true });
+      await setDoc(doc(db, 'settings', 'global'), { brands: b || brands, categories: c || conditions, deliveryZones: z || deliveryZones }, { merge: true });
     } catch(e) {
       console.error(e);
+    }
+  };
+
+  const generateReceipt = (order: Order) => {
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Invoice - ${order.id}</title>
+            <style>
+              body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 40px; color: #333; }
+              .header { border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 40px; }
+              .logo { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+              .invoice-title { font-size: 20px; color: #666; }
+              .details { display: flex; justify-content: space-between; margin-bottom: 40px; }
+              .table { width: 100%; border-collapse: collapse; margin-bottom: 40px; }
+              .table th, .table td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+              .table th { background-color: #f8f9fa; font-weight: bold; text-transform: uppercase; font-size: 12px; }
+              .total { text-align: right; font-size: 20px; font-weight: bold; margin-top: 20px; }
+              .footer { text-align: center; color: #777; font-size: 12px; margin-top: 50px; border-top: 1px solid #eee; padding-top: 20px; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <div class="logo">Tizzitech</div>
+              <div class="invoice-title">RECEIPT / INVOICE</div>
+            </div>
+            <div class="details">
+              <div>
+                <strong>Billed To:</strong><br>
+                ${order.shipping.firstName} ${order.shipping.surname}<br>
+                ${order.shipping.address}<br>
+                ${order.shipping.city}, ${order.shipping.stateLocation}
+              </div>
+              <div style="text-align: right;">
+                <strong>Invoice Number:</strong> INV-${order.id.slice(2, 10).toUpperCase()}<br>
+                <strong>Date:</strong> ${new Date(order.orderDate).toLocaleDateString()}<br>
+                <strong>Status:</strong> <span style="text-transform:uppercase;">${order.status}</span>
+              </div>
+            </div>
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Qty</th>
+                  <th>Price</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${order.items.map(item => `
+                  <tr>
+                    <td>${item.name}</td>
+                    <td>${item.quantity}</td>
+                    <td>₦${item.price.toLocaleString()}</td>
+                    <td>₦${(item.price * item.quantity).toLocaleString()}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+            <div class="total">
+              Total Amount: ₦${order.total.toLocaleString()}
+            </div>
+            <div class="footer">
+              Thank you for shopping with Tizzitech!<br>
+              If you have any questions about this receipt, please contact support@tizzitech.com.
+            </div>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.focus();
+      setTimeout(() => {
+        printWindow.print();
+      }, 500);
     }
   };
 
@@ -947,17 +1023,36 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
                           placeholder="New brand..."
                           value={newBrand}
                           onChange={(e) => setNewBrand(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const valBrand = newBrand.trim(); 
+                              if (valBrand && !brands.includes(valBrand)) {
+                                const newB = [...brands, valBrand];
+                                setBrands(newB);
+                                setNewBrand('');
+                                saveSettings(newB, null, null);
+                              } else if (brands.includes(valBrand)) {
+                                setNewBrand('');
+                              }
+                            }
+                          }}
                         />
                         <button
-                          onClick={() => {
-                            const valBrand = newBrand.trim(); if (valBrand && !brands.includes(valBrand)) { const newBrand = valBrand;
-      const newB = [...brands, newBrand];
-      setBrands(newB);
-      setNewBrand('');
-      saveSettings(newB, null);
-    }
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            const valBrand = newBrand.trim(); 
+                            if (valBrand && !brands.includes(valBrand)) {
+                              const newB = [...brands, valBrand];
+                              setBrands(newB);
+                              setNewBrand('');
+                              saveSettings(newB, null, null);
+                            } else if (brands.includes(valBrand)) {
+                              setNewBrand('');
+                            }
                           }}
-                          className="text-blue-400 text-sm font-bold flex items-center gap-1 hover:text-blue-300"
+                          className="text-blue-400 text-sm font-bold flex items-center gap-1 hover:text-blue-300 cursor-pointer"
                         >
                            <Plus className="h-4 w-4" /> Add
                         </button>
@@ -969,7 +1064,7 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
                             <span className="text-white font-medium">{brand}</span>
                             <div className="flex gap-3">
                                <button 
-                                 onClick={() => setBrands(brands.filter(b => b !== brand))}
+                                 onClick={() => { setBrands(brands.filter(b => b !== brand)); saveSettings(brands.filter(b => b !== brand), null, null); }}
                                  className="text-rose-500/70 hover:text-rose-500 transition-colors"
                                >
                                  <Trash2 className="h-4 w-4" />
@@ -991,15 +1086,36 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
                           placeholder="New condition..."
                           value={newCondition}
                           onChange={(e) => setNewCondition(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const valCond = newCondition.trim(); 
+                              if (valCond && !conditions.includes(valCond)) {
+                                const newC = [...conditions, valCond];
+                                setConditions(newC);
+                                setNewCondition(''); 
+                                saveSettings(null, newC, null);
+                              } else if (conditions.includes(valCond)) {
+                                setNewCondition('');
+                              }
+                            }
+                          }}
                         />
-                        <button 
-                          onClick={() => {
-                            const valCond = newCondition.trim(); if (valCond && !conditions.includes(valCond)) { const newCondition = valCond;
-                              setConditions([...conditions, newCondition]);
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            const valCond = newCondition.trim(); 
+                            if (valCond && !conditions.includes(valCond)) {
+                              const newC = [...conditions, valCond];
+                              setConditions(newC);
+                              setNewCondition(''); 
+                              saveSettings(null, newC, null);
+                            } else if (conditions.includes(valCond)) {
                               setNewCondition('');
                             }
                           }}
-                          className="text-blue-400 text-sm font-bold flex items-center gap-1 hover:text-blue-300"
+                          className="text-blue-400 text-sm font-bold flex items-center gap-1 hover:text-blue-300 cursor-pointer"
                         >
                            <Plus className="h-4 w-4" /> Add
                         </button>
@@ -1011,7 +1127,7 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
                             <span className="text-white font-medium">{cond}</span>
                             <div className="flex gap-3">
                                <button 
-                                 onClick={() => setConditions(conditions.filter(c => c !== cond))}
+                                 onClick={() => { setConditions(conditions.filter(c => c !== cond)); saveSettings(null, conditions.filter(c => c !== cond), null); }}
                                  className="text-rose-500/70 hover:text-rose-500 transition-colors"
                                >
                                  <Trash2 className="h-4 w-4" />
@@ -1417,8 +1533,8 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
                   <h1 className="text-2xl font-bold text-white">Invoices</h1>
                   <p className="text-neutral-400 text-sm mt-1">Manage and track billing invoices.</p>
                 </div>
-                <button className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm tracking-wide transition-colors">
-                  Generate Invoice
+                <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm tracking-wide transition-colors">
+                  Print Invoices List
                 </button>
               </div>
               <div className="bg-neutral-950 border border-neutral-900 rounded-2xl overflow-hidden shadow-sm">
@@ -1442,7 +1558,7 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
                            <span className="inline-flex px-2 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[10px] uppercase font-bold tracking-wider">Paid</span>
                         </td>
                         <td className="py-4 px-6 text-right">
-                           <button className="text-blue-400 hover:text-blue-300 text-sm font-bold transition-colors">Download PDF</button>
+                           <button onClick={() => generateReceipt(order)} className="text-blue-400 hover:text-blue-300 text-sm font-bold transition-colors">Generate Receipt</button>
                         </td>
                       </tr>
                     ))}
