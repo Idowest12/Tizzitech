@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CreditCard, MapPin, Phone, FileText, CheckCircle2, ChevronRight, ShoppingBag, ArrowLeft, Shield, Sparkles, Tag } from 'lucide-react';
+import { CreditCard, MapPin, Phone, FileText, CheckCircle2, ChevronRight, ShoppingBag, ArrowLeft, Shield, Sparkles, Tag, AlertCircle } from 'lucide-react';
 import { APIProvider, Map, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
 import { useAuth } from '../contexts/AuthContext';
+import { usePaystackPayment } from 'react-paystack';
+import { PaystackService } from '../services/paystack';
 import { CartItem, Order } from '../types';
 
 interface CheckoutViewProps {
@@ -10,6 +12,8 @@ interface CheckoutViewProps {
   hasPastOrders?: boolean;
   onComplete: (order: Order) => void;
   onCancel: () => void;
+  deliveryZones?: any[];
+
 }
 
 const API_KEY =
@@ -19,50 +23,156 @@ const API_KEY =
   '';
 const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY';
 
-export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel }: CheckoutViewProps) {
-  const { user } = useAuth();
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [fullname, setFullname] = useState(user?.name || '');
+export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, deliveryZones = [] }: CheckoutViewProps) {
+  const { user, profile, updateProfile } = useAuth();
+  const [phoneNumber, setPhoneNumber] = useState(profile?.phone || '');
+  const [fullname, setFullname] = useState(user?.displayName || '');
   const [emailAddress, setEmailAddress] = useState(user?.email || '');
-  const [paymentOption, setPaymentOption] = useState('card');
-  const [streetAddress, setStreetAddress] = useState('');
-  const [stateLocation, setStateLocation] = useState('Lagos');
-  const [city, setCity] = useState('');
-  const [lga, setLga] = useState('');
+  const [paymentOption, setPaymentOption] = useState('payonline');
+  const [streetAddress, setStreetAddress] = useState(profile?.address || '');
+  const [saveAddress, setSaveAddress] = useState(!!user);
+  const [stateLocation, setStateLocation] = useState(profile?.stateLocation || 'Lagos');
+  const [city, setCity] = useState(profile?.city || '');
+  const [lga, setLga] = useState(profile?.lga || '');
   const [locationCenter, setLocationCenter] = useState({ lat: 6.5244, lng: 3.3792 });
   const [isSuccess, setIsSuccess] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [step, setStep] = useState(1);
   const [cardDetails, setCardDetails] = useState({ number: '', expiry: '', cvv: '' });
   const [couponCode, setCouponCode] = useState('');
 
-  const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const getDeliveryFee = (selectedLga: string) => {
+    if (!selectedLga) return 0;
+    switch (selectedLga) {
+      case 'Eti-Osa': return 7000;
+      case 'Oshodi-Isolo': return 4000;
+      case 'Shomolu': return 3500;
+      case 'Badagry': return 6000;
+      case 'Alimosho': return 3000;
+      case 'Mushin': return 3000;
+      default: return 5000;
+    }
+  };
+
+  const deliveryFee = getDeliveryFee(lga);
+  const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0) + deliveryFee;
+
+  const paystackConfig = {
+    reference: `TZ_${new Date().getTime().toString()}`,
+    email: emailAddress || 'customer@tizzitech.com',
+    amount: total * 100, // Paystack uses kobo (kobo = naira * 100)
+    publicKey: PaystackService.getPublicKey() || 'pk_test_b8e217112ebde369baaa90fbdc9da3a763c87e14', 
+  };
+  
+  const initializePayment = usePaystackPayment(paystackConfig);
+
+  useEffect(() => {
+    if (profile) {
+      if (profile.address && !streetAddress) setStreetAddress(profile.address);
+      if (profile.phone && !phoneNumber) setPhoneNumber(profile.phone);
+      if (profile.city && !city) setCity(profile.city);
+      if (profile.stateLocation && stateLocation === 'Lagos') setStateLocation(profile.stateLocation);
+      if (profile.lga && !lga) setLga(profile.lga);
+    }
+    if (user) {
+      if (user.displayName && !fullname) setFullname(user.displayName);
+      if (user.email && !emailAddress) setEmailAddress(user.email);
+    }
+  }, [profile, user]);
 
   useEffect(() => {
     // Scroll to the top when checkout renders
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [step]);
 
-  const handleConfirmOrder = () => {
+  const handleConfirmOrder = async () => {
     setIsSuccess(true);
     
-    const expectedDate = new Date();
-    expectedDate.setDate(expectedDate.getDate() + 3);
+    const address = `${streetAddress}, ${city}, ${lga}, ${stateLocation}` || 'Lagos Deliveries, Lagos, Nigeria';
     
-    const newOrder: Order = {
-      id: `TZ${Math.random().toString(36).substr(2, 6).toUpperCase()}`,
-      items: [...cart],
-      total,
-      status: 'Confirmed',
-      orderDate: new Date(),
-      expectedDeliveryDate: expectedDate,
-      address: `${streetAddress}, ${city}, ${lga}, ${stateLocation}` || 'Lagos Deliveries, Lagos, Nigeria'
-    };
+    try {
+      const { runTransaction, doc, collection, addDoc } = await import('firebase/firestore');
+      const { db, handleFirestoreError, OperationType } = await import('../firebase');
+      
+      const orderId = `TZ${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+      const newOrderData = {
+        id: orderId,
+        fullname,
+        email: emailAddress,
+        address,
+        paymentOption,
+        total,
+        status: 'Pending',
+        orderDate: new Date().toISOString(),
+        items: cart.map(item => ({ id: item.id, price: item.price, quantity: item.quantity })),
+        userId: user?.uid || null
+      };
 
-    setTimeout(() => {
-      onComplete(newOrder);
+      try {
+        await runTransaction(db, async (transaction) => {
+          // Read all products to check stock
+          const productRefs = cart.map(item => doc(db, 'products', item.id));
+          const productDocs = await Promise.all(productRefs.map(ref => transaction.get(ref)));
+          
+          productDocs.forEach((pDoc, index) => {
+            if (!pDoc.exists()) {
+              throw new Error(`Product ${cart[index].name} not found in database.`);
+            }
+            const currentStock = pDoc.data().stock;
+            if (currentStock < cart[index].quantity) {
+              throw new Error(`Not enough stock for ${cart[index].name}.`);
+            }
+          });
+
+          // Deduct stock
+          productDocs.forEach((pDoc, index) => {
+            const newStock = pDoc.data().stock - cart[index].quantity;
+            transaction.update(productRefs[index], { stock: newStock });
+          });
+
+          // Create order
+          const orderRef = doc(db, 'orders', orderId);
+          transaction.set(orderRef, newOrderData);
+        });
+      } catch (err: any) {
+        handleFirestoreError(err, OperationType.CREATE, 'orders/checkout');
+      }
+
+      // Mock success data
+      const data: any = { success: true, orderId };
+      if (!data.success) {
+        setErrorMessage(data.message || 'Failed to place order.');
+        setIsSuccess(false);
+        return;
+      }
+
+      if (saveAddress && updateProfile) { try { await updateProfile({ phone: phoneNumber, address: streetAddress, city, stateLocation, lga }); } catch (e) { console.error("Failed to save address to profile", e); } }
+      const newOrder: Order = {
+        id: orderId,
+        items: [...cart],
+        total,
+        status: 'Pending',
+        orderDate: new Date(newOrderData.orderDate || new Date()),
+        expectedDeliveryDate: new Date(new Date().toISOString() || new Date(Date.now() + 3*24*60*60*1000)),
+        address
+      };
+
+      setTimeout(() => {
+        onComplete(newOrder);
+        setIsSuccess(false);
+        setStep(1);
+      }, 1500);
+    } catch (err: any) {
+      console.error(err);
+      let errMsg = err.message || 'Failed to place order.';
+      try {
+        const parsed = JSON.parse(errMsg);
+        if (parsed.message) errMsg = parsed.message;
+      } catch(e) {}
+      
+      setErrorMessage(errMsg);
       setIsSuccess(false);
-      setStep(1);
-    }, 2500);
+    }
   };
 
   const handleNextStep = (e: React.FormEvent) => {
@@ -71,7 +181,25 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel }: Chec
       setStep(step + 1);
       return;
     }
-    handleConfirmOrder();
+    
+    if (paymentOption === 'payonline') {
+      initializePayment({
+        onSuccess: async (reference: any) => {
+          const isVerified = await PaystackService.verifyTransaction(reference.reference);
+          if (isVerified) {
+            handleConfirmOrder();
+          } else {
+            setErrorMessage('Payment verification failed. Please contact support if you were debited.');
+          }
+        },
+        onClose: () => {
+          // User closed the payment modal
+          console.log('Payment modal closed');
+        }
+      });
+    } else {
+      handleConfirmOrder();
+    }
   };
 
   if (isSuccess) {
@@ -139,6 +267,18 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel }: Chec
           </div>
         </div>
       </div>
+
+      {errorMessage && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8">
+          <div className="bg-red-950/40 border border-red-900/50 p-4 rounded-xl flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+            <div>
+              <h3 className="text-sm font-bold text-red-400 uppercase tracking-wider mb-1">Order Error</h3>
+              <p className="text-sm text-red-300">{errorMessage}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Grid: Form Inputs Left vs Order Summary Right */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -232,7 +372,7 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel }: Chec
                             setStateLocation(e.target.value);
                             setLga(''); // Reset LGA on state change
                             if (e.target.value !== 'Lagos' && paymentOption === 'pod') {
-                              setPaymentOption('card');
+                              setPaymentOption('payonline');
                             }
                           }}
                           className="w-full bg-black border border-neutral-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors text-sm appearance-none"
@@ -267,9 +407,14 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel }: Chec
                             className="w-full bg-black border border-neutral-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors text-sm appearance-none"
                           >
                             <option value="" disabled>Select LGA</option>
-                            {['Agege', 'Ajeromi-Ifelodun', 'Alimosho', 'Amuwo-Odofin', 'Apapa', 'Badagry', 'Epe', 'Eti-Osa', 'Ibeju-Lekki', 'Ifako-Ijaiye', 'Ikeja', 'Ikorodu', 'Kosofe', 'Lagos Island', 'Lagos Mainland', 'Mushin', 'Ojo', 'Oshodi-Isolo', 'Shomolu', 'Surulere'].map(area => (
-                              <option key={area} value={area}>{area}</option>
-                            ))}
+                            {['Agege', 'Ajeromi-Ifelodun', 'Alimosho', 'Amuwo-Odofin', 'Apapa', 'Badagry', 'Epe', 'Eti-Osa', 'Ibeju-Lekki', 'Ifako-Ijaiye', 'Ikeja', 'Ikorodu', 'Kosofe', 'Lagos Island', 'Lagos Mainland', 'Mushin', 'Ojo', 'Oshodi-Isolo', 'Shomolu', 'Surulere'].map(area => {
+                              const fee = getDeliveryFee(area);
+                              return (
+                                <option key={area} value={area}>
+                                  {area} {fee > 0 ? `(₦${fee.toLocaleString()})` : ''}
+                                </option>
+                              );
+                            })}
                           </select>
                         ) : (
                           <input
@@ -281,10 +426,24 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel }: Chec
                             className="w-full bg-black border border-neutral-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors text-sm"
                           />
                         )}
+                        {lga && (
+                          <div className="mt-3 flex items-center justify-between p-3 bg-blue-900/10 border border-blue-900/30 rounded-lg">
+                            <span className="text-xs text-neutral-400 font-medium">Delivery Fee</span>
+                            <span className="text-sm font-mono font-bold text-blue-400">
+                              {deliveryFee > 0 ? `₦${deliveryFee.toLocaleString()}` : 'Standard'}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
 
+                  {user && (
+                    <div className="flex items-center space-x-3 pt-2 pb-4">
+                      <input type="checkbox" id="saveAddress" checked={saveAddress} onChange={(e) => setSaveAddress(e.target.checked)} className="w-4 h-4 rounded border-neutral-800 text-blue-600 focus:ring-blue-500 bg-black cursor-pointer" />
+                      <label htmlFor="saveAddress" className="text-sm text-neutral-300 select-none cursor-pointer">Save this address for future checkouts</label>
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <label className="block text-[10px] font-bold tracking-widest text-neutral-400 uppercase">Map Pin Location (Optional)</label>
                     <div className="rounded-xl border border-neutral-800 h-[220px] relative bg-black overflow-hidden">
@@ -335,8 +494,7 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel }: Chec
                       </div>
                       <div className="flex-1 flex flex-col">
                         {[
-                          { id: 'card', label: 'Card', icon: <CreditCard className="w-4 h-4" /> },
-                          { id: 'transfer', label: 'Bank Transfer', icon: <FileText className="w-4 h-4" /> },
+                          { id: 'payonline', label: 'Pay Online (Card/Transfer)', icon: <CreditCard className="w-4 h-4" /> },
                           ...(stateLocation === 'Lagos' && hasPastOrders ? [{ id: 'pod', label: 'Pay on Delivery', icon: <ShoppingBag className="w-4 h-4" /> }] : [])
                         ].map(option => (
                            <button
@@ -374,78 +532,25 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel }: Chec
                       </div>
 
                       <div className="flex-1">
-                        {paymentOption === 'card' && (
-                          <div className="space-y-4 animate-in fade-in duration-300">
-                            <h4 className="text-center font-bold tracking-widest uppercase text-xs text-neutral-300 mb-4">Enter your card details to pay</h4>
-                            <div>
-                               <label className="block text-[10px] font-bold tracking-widest text-neutral-500 uppercase mb-2">Card Number</label>
-                               <input 
-                                 type="text"
-                                 placeholder="0000 0000 0000 0000"
-                                 required={paymentOption === 'card'}
-                                 value={cardDetails.number}
-                                 onChange={(e) => setCardDetails(prev => ({...prev, number: e.target.value}))}
-                                 className="w-full bg-neutral-950 border border-neutral-900 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-emerald-500 transition-colors placeholder:text-neutral-700 font-mono text-sm"
-                               />
+                        {paymentOption === 'payonline' && (
+                          <div className="space-y-4 animate-in fade-in duration-300 text-center flex flex-col items-center justify-center h-full">
+                            <div className="w-12 h-12 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-500 mb-2">
+                               <CreditCard className="w-6 h-6" />
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
-                               <div>
-                                 <label className="block text-[10px] font-bold tracking-widest text-neutral-500 uppercase mb-2">Card Expiry</label>
-                                 <input 
-                                   type="text"
-                                   placeholder="MM / YY"
-                                   required={paymentOption === 'card'}
-                                   value={cardDetails.expiry}
-                                   onChange={(e) => setCardDetails(prev => ({...prev, expiry: e.target.value}))}
-                                   className="w-full bg-neutral-950 border border-neutral-900 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-emerald-500 transition-colors placeholder:text-neutral-700 font-mono text-sm text-center"
-                                 />
-                               </div>
-                               <div>
-                                 <label className="block text-[10px] font-bold tracking-widest text-neutral-500 uppercase mb-2">CVV</label>
-                                 <input 
-                                   type="text"
-                                   placeholder="123"
-                                   required={paymentOption === 'card'}
-                                   value={cardDetails.cvv}
-                                   onChange={(e) => setCardDetails(prev => ({...prev, cvv: e.target.value}))}
-                                   className="w-full bg-neutral-950 border border-neutral-900 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-emerald-500 transition-colors placeholder:text-neutral-700 font-mono text-sm text-center"
-                                 />
-                               </div>
-                            </div>
+                            <h4 className="font-bold tracking-widest uppercase text-xs text-neutral-300">Pay Securely with Paystack</h4>
+                            <p className="text-xs text-neutral-500 max-w-[200px] leading-relaxed">
+                              Click the button below to open the secure Paystack checkout.
+                            </p>
                             <button
                               type="submit"
-                              className="w-full mt-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 px-4 rounded-lg text-xs uppercase tracking-widest transition-colors shadow-none"
+                              className="w-full mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 px-4 rounded-lg text-xs uppercase tracking-widest transition-colors shadow-none"
                             >
                               Pay ₦{total.toLocaleString()}
                             </button>
                           </div>
                         )}
 
-                        {paymentOption === 'transfer' && (
-                          <div className="space-y-4 animate-in fade-in duration-300 text-center">
-                            <h4 className="font-bold tracking-widest uppercase text-xs text-neutral-300 mb-2">Transfer to the account below</h4>
-                            <div className="bg-neutral-950 border border-neutral-900 p-5 rounded-lg space-y-3 text-left">
-                               <div className="flex justify-between border-b border-neutral-900 pb-2">
-                                 <span className="text-[10px] text-neutral-500 tracking-widest uppercase">Bank Name</span>
-                                 <span className="text-xs font-bold text-white font-mono">GTB</span>
-                               </div>
-                               <div className="flex justify-between border-b border-neutral-900 pb-2">
-                                 <span className="text-[10px] text-neutral-500 tracking-widest uppercase">Account Name</span>
-                                 <span className="text-xs font-bold text-white font-mono">Tizzitech Global</span>
-                               </div>
-                               <div className="flex justify-between items-center pt-1">
-                                 <span className="text-[10px] text-neutral-500 tracking-widest uppercase">Account Number</span>
-                                 <span className="text-lg font-black text-emerald-500 font-mono">0421394182</span>
-                               </div>
-                            </div>
-                            <button
-                              type="submit"
-                              className="w-full mt-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 px-4 rounded-lg text-xs uppercase tracking-widest transition-colors shadow-none"
-                            >
-                              I've sent the money
-                            </button>
-                          </div>
-                        )}
+
 
                         {paymentOption === 'pod' && (
                           <div className="space-y-4 animate-in fade-in duration-300 text-center flex flex-col items-center justify-center h-full">
@@ -511,8 +616,12 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel }: Chec
               <ul className="space-y-4 max-h-[40vh] overflow-y-auto pr-2 scrollbar-thin">
                 {cart.map(item => (
                   <li key={item.id} className="flex gap-4 p-3 bg-black/40 border border-neutral-900 rounded-xl">
-                     <div className="w-16 h-16 bg-neutral-900 border border-neutral-800 shrink-0 relative rounded-lg overflow-hidden flex items-center justify-center p-1">
-                       <img src={item.imageUrl} alt={item.name} className="max-h-full max-w-full object-contain" />
+                     <div className="w-16 h-16 bg-neutral-900 border border-neutral-800 shrink-0 relative rounded-lg flex items-center justify-center p-1">
+                       {item.imageUrl ? (
+                         <img src={item.imageUrl} alt={item.name} className="max-h-full max-w-full object-contain rounded-md" />
+                       ) : (
+                         <span className="text-neutral-700 text-[10px] uppercase tracking-widest font-bold">No Img</span>
+                       )}
                        <span className="absolute -top-1.5 -right-1.5 bg-blue-600 text-white text-[9px] w-5 h-5 flex items-center justify-center rounded-full font-bold">
                          {item.quantity}
                        </span>
@@ -549,11 +658,15 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel }: Chec
               <div className="space-y-3.5 text-xs border-t border-neutral-900 pt-6">
                 <div className="flex justify-between text-neutral-400">
                   <span>Subtotal Invoice</span>
-                  <span className="text-white font-mono font-medium">₦{total.toLocaleString()}</span>
+                  <span className="text-white font-mono font-medium">₦{(total - deliveryFee).toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between text-neutral-400">
                   <span>Inland Shipping</span>
-                  <span className="text-emerald-500 font-bold uppercase text-[10px] tracking-wider">Free Delivery</span>
+                  {deliveryFee > 0 ? (
+                    <span className="text-white font-mono font-medium">₦{deliveryFee.toLocaleString()}</span>
+                  ) : (
+                    <span className="text-emerald-500 font-bold uppercase text-[10px] tracking-wider">{lga ? 'Standard Delivery' : 'Select LGA for Delivery Fee'}</span>
+                  )}
                 </div>
                 
                 <div className="border-t border-neutral-900 pt-4 mt-2 flex justify-between items-end text-white">

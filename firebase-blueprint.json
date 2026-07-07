@@ -2,60 +2,59 @@
   "entities": {
     "Product": {
       "title": "Product",
-      "description": "A tech product in the store",
+      "description": "A product for sale in the store.",
       "type": "object",
       "properties": {
+        "id": { "type": "string" },
         "name": { "type": "string" },
         "category": { "type": "string" },
         "brand": { "type": "string" },
         "price": { "type": "number" },
+        "costPrice": { "type": "number" },
         "condition": { "type": "string" },
-        "specs": { "type": "object" },
         "stock": { "type": "number" },
         "imageUrl": { "type": "string" },
-        "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" }
+        "description": { "type": "string" }
       },
-      "required": ["name", "category", "brand", "price", "condition", "stock", "imageUrl"]
+      "required": ["id", "name", "category", "brand", "price", "stock"]
     },
     "Order": {
       "title": "Order",
-      "description": "A user's order",
+      "description": "A customer order.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
+        "id": { "type": "string" },
         "items": { "type": "array" },
-        "totalAmount": { "type": "number" },
-        "status": { "type": "string" },
-        "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" }
+        "total": { "type": "number" },
+        "status": { "type": "string", "enum": ["Pending", "Confirmed", "Processing", "Picked Up", "Delivered", "Cancelled"] },
+        "orderDate": { "type": "string" },
+        "customerInfo": { "type": "object" }
       },
-      "required": ["userId", "items", "totalAmount", "status", "createdAt"]
+      "required": ["id", "items", "total", "status", "orderDate"]
     },
-    "User": {
-      "title": "User",
-      "description": "User profile",
+    "Settings": {
+      "title": "Settings",
+      "description": "Global store settings like categories and brands.",
       "type": "object",
       "properties": {
-        "email": { "type": "string" },
-        "role": { "type": "string" },
-        "createdAt": { "type": "string" }
-      },
-      "required": ["email", "role", "createdAt"]
+        "categories": { "type": "array" },
+        "brands": { "type": "array" },
+        "deliveryZones": { "type": "array" }
+      }
     }
   },
   "firestore": {
-    "products": {
+    "products/{productId}": {
       "schema": { "$ref": "#/entities/Product" },
-      "description": "Store inventory"
+      "description": "Products available in the store."
     },
-    "orders": {
+    "orders/{orderId}": {
       "schema": { "$ref": "#/entities/Order" },
-      "description": "Orders placed by users"
+      "description": "Customer orders."
     },
-    "users": {
-      "schema": { "$ref": "#/entities/User" },
-      "description": "User profiles"
+    "settings/{settingId}": {
+      "schema": { "$ref": "#/entities/Settings" },
+      "description": "Store settings (e.g., globals)."
     }
   }
 }

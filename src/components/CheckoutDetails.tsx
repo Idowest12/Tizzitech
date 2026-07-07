@@ -417,7 +417,11 @@ export function CheckoutDetails({ cart, onComplete, onCancel }: CheckoutDetailsP
                 {cart.map((item) => (
                   <div key={item.id} className="flex gap-4 bg-black/40 border border-neutral-900 rounded-lg p-3">
                     <div className="w-14 h-14 bg-neutral-950 border border-neutral-900 rounded-md shrink-0 relative flex items-center justify-center p-2">
-                      <img src={item.imageUrl} alt={item.name} className="w-full h-full object-contain" />
+                      {item.imageUrl ? (
+                        <img src={item.imageUrl} alt={item.name} className="w-full h-full object-contain" />
+                      ) : (
+                        <span className="text-neutral-700 text-[8px] uppercase tracking-widest font-bold">No Img</span>
+                      )}
                       <span className="absolute -top-1.5 -right-1.5 bg-blue-600 text-white text-[9px] w-5 h-5 flex items-center justify-center rounded-full font-bold font-mono">
                         {item.quantity}
                       </span>

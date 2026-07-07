@@ -14,13 +14,17 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart, 
       onClick={() => onViewProduct(product)}
       className="group relative flex flex-col bg-transparent cursor-pointer"
     >
-      <div className="aspect-[4/3] bg-neutral-900 overflow-hidden relative border border-neutral-900 border-b-0">
-        <img
-          src={product.imageUrl}
-          alt={product.name}
-          className="h-full w-full object-cover object-center transition-transform duration-700 group-hover:scale-105"
-          loading="lazy"
-        />
+      <div className="aspect-[4/3] bg-neutral-900 overflow-hidden relative border border-neutral-900 border-b-0 flex items-center justify-center">
+        {product.imageUrl ? (
+          <img
+            src={product.imageUrl}
+            alt={product.name}
+            className="h-full w-full object-cover object-center transition-transform duration-700 group-hover:scale-105"
+            loading="lazy"
+          />
+        ) : (
+          <span className="text-neutral-700 text-xs uppercase tracking-widest font-bold">No Image</span>
+        )}
         <div className="absolute top-2 left-2 flex gap-2">
             <span className="inline-flex items-center bg-white px-2 py-1 text-[10px] font-bold text-black uppercase tracking-widest shadow-sm">
                 FEATURED

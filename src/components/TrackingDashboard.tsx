@@ -38,15 +38,17 @@ export function TrackingDashboard({ orders }: TrackingDashboardProps) {
   }
 
   const getStatusIndex = (status: OrderStatus) => {
-    const statuses: OrderStatus[] = ['Confirmed', 'Accepted', 'Shipped', 'In Transit', 'Delivered'];
-    return statuses.indexOf(status);
+    const statuses: OrderStatus[] = ['Confirmed', 'Accepted', 'In Transit', 'Picked Up', 'Delivered'];
+    if (status === 'Processing') return 1;
+    if (status === 'Shipped') return 2;
+    return Math.max(0, statuses.indexOf(status));
   };
 
   const statusSteps = [
     { label: 'Confirmed', icon: Clock },
     { label: 'Accepted', icon: CheckCircle2 },
-    { label: 'Shipped', icon: Package },
     { label: 'In Transit', icon: Truck },
+    { label: 'Picked Up', icon: Package },
     { label: 'Delivered', icon: CheckCircle2 },
   ];
 

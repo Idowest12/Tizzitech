@@ -10,9 +10,10 @@ interface ProductDetailsProps {
   onGoBack: () => void;
   products: Product[];
   setProducts: React.Dispatch<React.SetStateAction<Product[]>>;
+  onRequireAuth?: () => void;
 }
 
-export function ProductDetails({ product, onAddToCart, onGoBack, products, setProducts }: ProductDetailsProps) {
+export function ProductDetails({ product, onAddToCart, onGoBack, products, setProducts, onRequireAuth }: ProductDetailsProps) {
   const { profile, user } = useAuth();
   const [activeImage, setActiveImage] = useState<string>('');
   const [purchaseQuantity, setPurchaseQuantity] = useState<number>(1);
@@ -40,7 +41,7 @@ export function ProductDetails({ product, onAddToCart, onGoBack, products, setPr
     }
   };
 
-  const handleReviewSubmit = (e: React.FormEvent) => {
+  const handleReviewSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reviewComment.trim()) return;
 
@@ -53,6 +54,20 @@ export function ProductDetails({ product, onAddToCart, onGoBack, products, setPr
       comment: reviewComment.trim(),
       date: new Date().toISOString().split('T')[0]
     };
+
+    try {
+      const res = await fetch(`/api/products/${product.id}/reviews`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newReview)
+      });
+      const data = await res.json();
+      if (data.success && data.review) {
+        newReview.id = data.review.id;
+      }
+    } catch (err) {
+      console.error('Failed to post review to backend', err);
+    }
 
     // Update global products list with the new review so it persists
     setProducts((prevProducts) =>
@@ -73,7 +88,6 @@ export function ProductDetails({ product, onAddToCart, onGoBack, products, setPr
       product.reviews = [];
     }
     product.reviews = [newReview, ...product.reviews];
-
     // Reset review input fields
     setReviewComment('');
     setRatingInput(5);
@@ -84,7 +98,6 @@ export function ProductDetails({ product, onAddToCart, onGoBack, products, setPr
     }, 4000);
   };
 
-  // Get current average rating and count
   const reviewsList = product.reviews || [];
   const averageRating = reviewsList.length > 0
     ? (reviewsList.reduce((sum, r) => sum + r.rating, 0) / reviewsList.length).toFixed(1)
@@ -342,56 +355,71 @@ export function ProductDetails({ product, onAddToCart, onGoBack, products, setPr
                   <p className="text-xs text-neutral-500 mt-1">Share your product satisfaction feedback with the Tizzitech community.</p>
                 </div>
 
-                {reviewSuccessMsg && (
-                  <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-semibold">
-                    {reviewSuccessMsg}
+                {!user ? (
+                  <div className="bg-neutral-900/50 border border-neutral-800 p-6 rounded-xl text-center space-y-4">
+                    <p className="text-sm text-neutral-400">You must be signed in to write a review.</p>
+                    <button
+                      type="button"
+                      onClick={onRequireAuth}
+                      className="px-6 py-2.5 bg-white text-black font-bold text-xs tracking-widest uppercase rounded hover:bg-neutral-200 transition-colors inline-block"
+                    >
+                      Sign In / Register
+                    </button>
                   </div>
-                )}
-
-                <form onSubmit={handleReviewSubmit} className="space-y-5">
-                  <div className="grid grid-cols-1 gap-4">
-                    <div>
-                      <label className="block text-[10px] font-bold tracking-widest text-neutral-400 uppercase mb-2">Satisfaction Rating</label>
-                      <div className="flex items-center gap-1 py-1.5">
-                        {[1, 2, 3, 4, 5].map((stars) => (
-                          <button
-                            key={stars}
-                            type="button"
-                            onClick={() => setRatingInput(stars)}
-                            onMouseEnter={() => setHoverRating(stars)}
-                            onMouseLeave={() => setHoverRating(null)}
-                            className="text-amber-500 hover:scale-110 transition-transform transform p-1"
-                          >
-                            <Star 
-                              className={`w-6 h-6 ${
-                                stars <= (hoverRating ?? ratingInput) ? 'fill-current text-amber-500' : 'text-neutral-700'
-                              }`} 
-                            />
-                          </button>
-                        ))}
+                ) : (
+                  <>
+                    {reviewSuccessMsg && (
+                      <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-semibold">
+                        {reviewSuccessMsg}
                       </div>
-                    </div>
-                  </div>
+                    )}
 
-                  <div>
-                    <label className="block text-[10px] font-bold tracking-widest text-neutral-400 uppercase mb-2">My Feedback Review</label>
-                    <textarea 
-                      rows={4}
-                      value={reviewComment}
-                      onChange={(e) => setReviewComment(e.target.value)}
-                      placeholder="Share your experience about performance, quality, and service satisfaction levels..."
-                      className="w-full bg-black border border-neutral-800 rounded-lg px-4 py-3 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors resize-none"
-                      required 
-                    ></textarea>
-                  </div>
+                    <form onSubmit={handleReviewSubmit} className="space-y-5">
+                      <div className="grid grid-cols-1 gap-4">
+                        <div>
+                          <label className="block text-[10px] font-bold tracking-widest text-neutral-400 uppercase mb-2">Satisfaction Rating</label>
+                          <div className="flex items-center gap-1 py-1.5">
+                            {[1, 2, 3, 4, 5].map((stars) => (
+                              <button
+                                key={stars}
+                                type="button"
+                                onClick={() => setRatingInput(stars)}
+                                onMouseEnter={() => setHoverRating(stars)}
+                                onMouseLeave={() => setHoverRating(null)}
+                                className="text-amber-500 hover:scale-110 transition-transform transform p-1"
+                              >
+                                <Star 
+                                  className={`w-6 h-6 ${
+                                    stars <= (hoverRating ?? ratingInput) ? 'fill-current text-amber-500' : 'text-neutral-700'
+                                  }`} 
+                                />
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
 
-                  <button 
-                    type="submit" 
-                    className="px-8 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs tracking-widest uppercase transition-colors"
-                  >
-                    Submit Satisfaction Review
-                  </button>
-                </form>
+                      <div>
+                        <label className="block text-[10px] font-bold tracking-widest text-neutral-400 uppercase mb-2">My Feedback Review</label>
+                        <textarea 
+                          rows={4}
+                          value={reviewComment}
+                          onChange={(e) => setReviewComment(e.target.value)}
+                          placeholder="Share your experience about performance, quality, and service satisfaction levels..."
+                          className="w-full bg-black border border-neutral-800 rounded-lg px-4 py-3 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors resize-none"
+                          required 
+                        ></textarea>
+                      </div>
+
+                      <button 
+                        type="submit" 
+                        className="px-8 py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs tracking-widest uppercase transition-colors"
+                      >
+                        Submit Satisfaction Review
+                      </button>
+                    </form>
+                  </>
+                )}
               </div>
 
             </div>

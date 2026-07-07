@@ -1,0 +1,6 @@
+Migrating products...
+Found 32 docs in products
+[2026-07-06T16:35:11.915Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x16580da3 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:35:12.042Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x16580da4 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:35:12.657Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x16580da5 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:35:14.524Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x16580da6 error. Code: 5 Message: 5 NOT_FOUND: 

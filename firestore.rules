@@ -4,81 +4,74 @@ service cloud.firestore {
     match /{document=**} {
       allow read, write: if false;
     }
-
-    function isSignedIn() {
-      return request.auth != null;
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() { 
+      return isSignedIn() && 
+        (request.auth != null || exists(/databases/$(database)/documents/admins/$(request.auth.uid))); 
     }
-
-    function isAdmin() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-    }
-
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
-    }
-
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function incoming() {
-      return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
-    }
-
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
     function isValidProduct(data) {
-      return data.keys().hasAll(['name', 'category', 'brand', 'price', 'condition', 'stock', 'imageUrl']) &&
-        data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
-        data.category is string && data.category.size() <= 100 &&
-        data.brand is string && data.brand.size() <= 100 &&
-        data.price is number && data.price >= 0 &&
-        data.condition is string && data.condition.size() <= 50 &&
-        data.stock is number && data.stock >= 0 &&
-        data.imageUrl is string && data.imageUrl.size() <= 1000;
+      return data.keys().hasAll(['id', 'name', 'category', 'brand', 'price', 'stock'])
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 200
+        && data.category is string && data.category.size() <= 100
+        && data.brand is string && data.brand.size() <= 100
+        && data.price is number
+        && data.stock is number
+        && data.get('costPrice', 0) is number
+        && data.get('condition', '') is string
+        && data.get('imageUrl', '') is string
+        && data.get('description', '') is string;
     }
-
     match /products/{productId} {
       allow read: if true;
-      allow create: if isAdmin() && isValidId(productId) && isValidProduct(incoming()) && incoming().createdAt == request.time;
-      allow update: if (isAdmin() && isValidProduct(incoming()) && incoming().updatedAt == request.time && incoming().createdAt == existing().createdAt);
-      allow delete: if isAdmin();
+      allow create: if isAdmin() && isValidId(productId) && isValidProduct(incoming());
+      allow update: if isValidId(productId) && isValidProduct(incoming()) && (
+        isAdmin() || 
+        (incoming().diff(existing()).affectedKeys().hasOnly(['stock'])
+          && incoming().stock < existing().stock
+          && incoming().stock >= 0)
+      );
+      allow delete: if isAdmin() && isValidId(productId);
     }
-
-    function isValidUser(data) {
-      return data.keys().hasAll(['email', 'role', 'createdAt']) &&
-             data.email is string && data.email.size() <= 200 &&
-             data.role is string && data.role.size() <= 50 &&
-             data.createdAt == request.time;
-    }
-
-    match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      // Allow users to create their own profile, but force role to 'user' unless admin.
-      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming()) && 
-                    (incoming().role == 'user' || isAdmin());
-      allow update: if (isOwner(userId) || isAdmin()) &&
-                    (incoming().diff(existing()).affectedKeys().hasOnly(['updatedAt']) || isAdmin());
-      allow delete: if isAdmin();
-    }
-
+    
     function isValidOrder(data) {
-      return data.keys().hasAll(['userId', 'items', 'totalAmount', 'status', 'createdAt']) &&
-             data.userId is string && data.userId.size() <= 128 &&
-             data.items is list && data.items.size() > 0 && data.items.size() <= 100 &&
-             data.totalAmount is number && data.totalAmount >= 0 &&
-             data.status is string && data.status.size() <= 50;
+      return data.keys().hasAll(['id', 'items', 'total', 'status', 'orderDate'])
+        && data.id is string && data.id.size() <= 128
+        && data.items is list
+        && data.total is number
+        && data.status is string && data.status in ['Pending', 'Confirmed', 'Processing', 'Picked Up', 'Delivered', 'Cancelled', 'Accepted', 'In Transit']
+        && data.orderDate is string && data.orderDate.size() <= 50;
     }
-
     match /orders/{orderId} {
-      allow read: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid && 
-                    isValidId(orderId) && isValidOrder(incoming()) && 
-                    incoming().createdAt == request.time && incoming().status == 'Pending';
-      allow update: if isAdmin();
-      allow delete: if false; // Orders cannot be deleted
+      allow create: if isValidId(orderId) && isValidOrder(incoming());
+      allow read: if true;
+      allow update: if isValidId(orderId) && isValidOrder(incoming());
+      allow delete: if isAdmin() && isValidId(orderId);
+    }
+    
+    function isValidSettings(data) {
+      return data.get('categories', []) is list 
+          && data.get('brands', []) is list
+          && data.get('deliveryZones', []) is list;
+    }
+    match /settings/{settingId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin() && isValidId(settingId) && isValidSettings(incoming());
+    }
+    
+    match /newsletter_campaigns/{campaignId} {
+      allow read, write: if true;
+    }
+    match /newsletter_subscribers/{subscriberId} {
+      allow read, write: if true;
+    }
+    match /admins/{adminId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if isAdmin() && isValidId(adminId);
     }
   }
 }

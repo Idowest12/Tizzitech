@@ -19,7 +19,6 @@ import { Category } from "../types";
 interface HeaderProps {
   cartCount: number;
   onOpenCart: () => void;
-  onOpenAdmin: () => void;
   onOpenTracking: () => void;
   onOpenProfile: () => void;
   onOpenAuth: () => void;
@@ -31,13 +30,13 @@ interface HeaderProps {
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   onGoHome: () => void;
+  onSearchStart?: () => void;
   onOpenTechOfTheDay: () => void;
 }
 
 export function Header({
   cartCount,
   onOpenCart,
-  onOpenAdmin,
   onOpenTracking,
   onOpenProfile,
   onOpenAuth,
@@ -48,6 +47,7 @@ export function Header({
   searchQuery,
   setSearchQuery,
   onGoHome,
+  onSearchStart,
 }: HeaderProps) {
   const { user, role, logOut } = useAuth();
   const [openDropdown, setOpenDropdown] = useState<
@@ -98,11 +98,6 @@ export function Header({
 
   const handleProfileClick = () => {
     onOpenProfile();
-    setOpenDropdown(null);
-  };
-
-  const handleAdminClick = () => {
-    onOpenAdmin();
     setOpenDropdown(null);
   };
 
@@ -270,7 +265,12 @@ export function Header({
                 className="block w-full border-b border-neutral-800 bg-transparent py-1.5 pl-9 pr-3 text-white placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none sm:text-sm transition-colors"
                 placeholder="Search..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (onSearchStart && e.target.value.length > 0) {
+                    onSearchStart();
+                  }
+                }}
               />
             </div>
           </div>
@@ -282,16 +282,6 @@ export function Header({
               title="Profile"
             >
               <User className="h-5 w-5" />
-            </button>
-          )}
-
-          {role === "admin" && (
-            <button
-              onClick={handleAdminClick}
-              className="text-neutral-400 hover:text-white transition-colors"
-              title="Admin Dashboard"
-            >
-              <Package className="h-5 w-5" />
             </button>
           )}
 
@@ -339,7 +329,12 @@ export function Header({
               className="block w-full border border-neutral-800 rounded bg-neutral-900 py-2 pl-9 pr-3 text-white placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none sm:text-sm transition-colors"
               placeholder="Search..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (onSearchStart && e.target.value.length > 0) {
+                    onSearchStart();
+                  }
+                }}
             />
           </div>
 
@@ -553,17 +548,6 @@ export function Header({
                   >
                     Profile
                   </button>
-                  {role === "admin" && (
-                    <button
-                      onClick={() => {
-                        handleAdminClick();
-                        setIsMobileMenuOpen(false);
-                      }}
-                      className="w-full text-left py-3 px-3 hover:bg-neutral-900 hover:text-white rounded transition-colors bg-neutral-950 mt-1 text-purple-400"
-                    >
-                      Admin Dashboard
-                    </button>
-                  )}
                   <button
                     onClick={() => {
                       handleLogOut();

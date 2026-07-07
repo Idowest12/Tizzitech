@@ -1,0 +1,36 @@
+Migrating products...
+Found 32 docs in products
+[2026-07-06T16:27:55.785Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d92f4 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:27:56.031Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d92f5 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:27:57.307Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d92f6 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:27:59.281Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d92f7 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:28:02.277Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d92f8 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:28:04.325Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d92f9 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:28:07.389Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d92fa error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:28:16.124Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d92fb error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:28:23.336Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d92fc error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:28:40.871Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d92fd error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:29:17.028Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d92fe error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:30:06.959Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d92ff error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:30:45.089Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9300 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:32:09.955Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9301 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:33:31.032Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9302 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:34:02.773Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9303 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:34:58.280Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9304 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:35:33.987Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9305 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:37:03.084Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9306 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:37:53.211Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9307 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:38:53.420Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9308 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:39:53.696Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9309 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:40:24.257Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d930a error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:41:21.746Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d930b error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:42:05.224Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d930c error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:43:03.044Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d930d error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:43:46.340Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d930e error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:45:04.956Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d930f error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:45:57.113Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9310 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:47:07.889Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9311 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:48:08.559Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9312 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:49:09.389Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9313 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:50:00.703Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9314 error. Code: 5 Message: 5 NOT_FOUND: 
+[2026-07-06T16:50:59.374Z]  @firebase/firestore: Firestore (12.13.0): GrpcConnection RPC 'Write' stream 0x463d9315 error. Code: 5 Message: 5 NOT_FOUND: 

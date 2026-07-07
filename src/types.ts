@@ -15,6 +15,7 @@ export interface Product {
   category: string;
   brand: string;
   price: number;
+  costPrice?: number;
   condition: string;
   specs?: Record<string, string>;
   stock: number;
@@ -30,9 +31,18 @@ export interface CartItem extends Product {
   quantity: number;
 }
 
-export type OrderStatus = 'Confirmed' | 'Accepted' | 'Shipped' | 'In Transit' | 'Delivered';
+export type OrderStatus = 'Confirmed' | 'Processing' | 'Accepted' | 'Shipped' | 'Picked Up' | 'In Transit' | 'Delivered';
+
+export interface OrderEmailEvent {
+  date: Date;
+  subject: string;
+  recipient: string;
+  status: 'Sent' | 'Failed' | 'Pending';
+}
 
 export interface Order {
+  email?: string;
+  fullname?: string;
   id: string;
   items: CartItem[];
   total: number;
@@ -40,5 +50,6 @@ export interface Order {
   orderDate: Date;
   expectedDeliveryDate: Date;
   address: string;
+  emailHistory?: OrderEmailEvent[];
 }
 

@@ -1,3 +1,5 @@
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { db } from './firebase';
 import React, { useState, useMemo, useEffect } from "react";
 import { Menu, ChevronDown, SlidersHorizontal, Lock } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -5,19 +7,21 @@ import { Header } from "./components/Header";
 import { ProductCard } from "./components/ProductCard";
 import { Filters } from "./components/Filters";
 import { CartDrawer } from "./components/CartDrawer";
-import { AdminDashboard } from "./components/AdminDashboard";
 import { ProductOverviewPane } from "./components/ProductOverviewPane";
 import { CheckoutView } from "./components/CheckoutView";
 import { TrackingDashboard } from "./components/TrackingDashboard";
+import { PrivacyPolicy, TermsOfService, RefundPolicy } from "./components/LegalPages";
 import { UserProfileDashboard } from "./components/UserProfileDashboard";
 import { AuthModal } from "./components/AuthModal";
+import { ResetPasswordView } from "./components/ResetPasswordView";
 import { AboutUs } from "./components/AboutUs";
 import { ContactUs } from "./components/ContactUs";
 import { FAQs } from "./components/FAQs";
 import { TechOfTheDay } from "./components/TechOfTheDay";
 import { ProductDetails } from "./components/ProductDetails";
+import { Newsletter } from "./components/Newsletter";
 import { useAuth } from "./contexts/AuthContext";
-import { initialProducts, CATEGORIES } from "./data";
+import { initialProducts, CATEGORIES as FALLBACK_CATEGORIES, BRANDS as FALLBACK_BRANDS } from "./data";
 import { Category, Condition, CartItem, Product, Order } from "./types";
 
 const containerVariants = {
@@ -36,7 +40,7 @@ const itemVariants = {
 };
 
 export default function App() {
-  const { user, profile } = useAuth();
+  const { user, profile, role } = useAuth();
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -51,13 +55,22 @@ export default function App() {
   };
 
   const [products, setProducts] = useState<Product[]>(initialProducts);
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    const saved = localStorage.getItem('tizzitech_cart');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  });
   const [orders, setOrders] = useState<Order[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [view, setView] = useState<
     | "store"
-    | "admin"
     | "tracking"
     | "profile"
     | "about"
@@ -66,10 +79,66 @@ export default function App() {
     | "faqs"
     | "product-details"
     | "checkout"
+    | "reset-password"
+    | "privacy"
+    | "terms"
+    | "refund"
   >("store");
   const [searchQuery, setSearchQuery] = useState("");
+  const [resetToken, setResetToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const visitorId = localStorage.getItem('tizzitech_visitor_id') || `v_${Math.random().toString(36).substring(2,15)}`;
+    if (!localStorage.getItem('tizzitech_visitor_id')) {
+      localStorage.setItem('tizzitech_visitor_id', visitorId);
+    }
+    fetch('/api/analytics/visit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ visitorId, isRegistered: !!user })
+    }).catch(() => {});
+  }, [user]);
+  useEffect(() => {
+    // Parse URL for reset token
+    const params = new URLSearchParams(window.location.search);
+    const viewParam = params.get('view');
+    const tokenParam = params.get('token');
+    
+    if (viewParam === 'reset-password' && tokenParam) {
+      setResetToken(tokenParam);
+      setView('reset-password');
+      // Clean up URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [pendingCheckout, setPendingCheckout] = useState(false);
+
+  useEffect(() => {
+    // Fetch products from backend on mount (now connected to Supabase)
+    const loadProducts = async () => {
+      try {
+        // Fetch Settings
+        const settingsSnap = await getDoc(doc(db, 'settings', 'global'));
+        if (settingsSnap.exists()) {
+          const s = settingsSnap.data();
+          if (s.brands) setBrandsList(s.brands);
+          if (s.categories) setCategoriesList(s.categories);
+          if (s.deliveryZones) setDeliveryZones(s.deliveryZones);
+        }
+        
+        // Fetch products from firestore directly
+        const prodSnap = await getDocs(collection(db, 'products'));
+        const data = prodSnap.docs.map(d => d.data());
+        if (data.length > 0) {
+          setProducts(data as Product[]);
+        }
+      } catch (err) {
+        console.error("Error fetching", err);
+      }
+    };
+    loadProducts();
+  }, []);
 
   useEffect(() => {
     if (user && pendingCheckout) {
@@ -78,170 +147,159 @@ export default function App() {
     }
   }, [user, pendingCheckout]);
 
+  useEffect(() => {
+    if (view === "admin") {
+      window.location.href = "/admin.html";
+    }
+  }, [view]);
+
   // Persistent Orders for User
   useEffect(() => {
+    let intervalId: NodeJS.Timeout;
     if (user) {
-      const storedOrders = localStorage.getItem(`tizzitech_orders_${user.uid}`);
-      if (storedOrders) {
+      // Fetch real orders from database using the token
+      const fetchOrders = async () => {
         try {
-          const parsed = JSON.parse(storedOrders).map((o: any) => ({
+          const token = localStorage.getItem('authToken');
+          if (token && user.uid) {
+            const res = await fetch(`/api/users/${encodeURIComponent(user.uid)}/orders`, {
+              headers: {
+                'Authorization': `Bearer ${token}`
+              },
+              cache: 'no-store'
+            });
+            const contentType = res.headers.get("content-type");
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+              const data = await res.json();
+              if (data.success && data.orders) {
+                const mapped = data.orders.map((o: any) => ({
+                  id: o.id,
+                  address: o.address,
+                  total: parseFloat(o.total),
+                  status: o.status,
+                  orderDate: new Date(o.orderDate),
+                  expectedDeliveryDate: new Date(o.expectedDeliveryDate),
+                  items: (o.items || []).map((item: any) => ({
+                    id: item.id,
+                    name: item.name,
+                    category: item.category,
+                    brand: item.brand,
+                    price: parseFloat(item.price),
+                    quantity: item.quantity,
+                    imageUrl: item.imageUrl
+                  }))
+                }));
+                
+                if (mapped.length > 0) {
+                  setOrders(mapped);
+                  return;
+                }
+              }
+            }
+          }
+        } catch (e: any) {
+          if (e.message !== 'Failed to fetch') {
+            console.error("Error fetching user orders:", e);
+          }
+        }
+        
+        // Fallback to local storage
+        const storedOrders = localStorage.getItem(`tizzitech_orders_${user.uid}`);
+        if (storedOrders) {
+          try {
+            const parsed = JSON.parse(storedOrders).map((o: any) => ({
+              ...o,
+              orderDate: new Date(o.orderDate),
+              expectedDeliveryDate: new Date(o.expectedDeliveryDate),
+            }));
+            setOrders(parsed);
+          } catch (e) {
+            console.error("Error reading stored orders:", e);
+          }
+        }
+      };
+      fetchOrders();
+      intervalId = setInterval(fetchOrders, 5000);
+    }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [user]);
+
+
+
+  // Persist guest orders whenever they change
+  useEffect(() => {
+    if (!user && orders.length > 0) {
+      localStorage.setItem('tizzitech_guest_orders', JSON.stringify(orders));
+    }
+  }, [user, orders]);
+
+  // Load guest orders from local storage
+
+  useEffect(() => {
+    if (!user) {
+      const guestOrders = localStorage.getItem('tizzitech_guest_orders');
+      if (guestOrders) {
+        try {
+          const parsed = JSON.parse(guestOrders).map((o: any) => ({
             ...o,
             orderDate: new Date(o.orderDate),
-            expectedDeliveryDate: new Date(o.expectedDeliveryDate),
+            expectedDeliveryDate: new Date(o.expectedDeliveryDate)
           }));
-          setOrders(parsed);
+          // Only set if we don't already have orders to avoid overwrite issues during session
+          if (orders.length === 0) {
+            setOrders(parsed);
+          }
         } catch (e) {
-          console.error("Error reading stored orders:", e);
+          console.error('Error parsing guest orders', e);
         }
-      } else {
-        // Seed some beautiful, realistic order history spanning March, April, May 2026
-        const seedOrders: Order[] = [
-          {
-            id: "TZ-20260315-AX9",
-            address: "15, Isaac John Street, G.R.A, Ikeja, Lagos",
-            total: 1215000,
-            status: "Delivered",
-            orderDate: new Date("2026-03-15T11:20:00Z"),
-            expectedDeliveryDate: new Date("2026-03-18T14:30:00Z"),
-            items: [
-              {
-                id: "p2",
-                name: "Dell XPS 15",
-                category: "Laptops",
-                brand: "Dell",
-                price: 1200000,
-                condition: "Used",
-                stock: 2,
-                imageUrl:
-                  "https://images.unsplash.com/photo-1593642632823-8f785ba67e45?auto=format&fit=crop&w=800&q=80",
-                quantity: 1,
-              },
-              {
-                id: "p8",
-                name: "Logitech Pebble Mouse",
-                category: "Mouse",
-                brand: "Logitech",
-                price: 15000,
-                condition: "New",
-                stock: 12,
-                imageUrl:
-                  "https://images.unsplash.com/photo-1615663245857-ac93bb7c39e7?auto=format&fit=crop&w=800&q=80",
-                quantity: 1,
-              },
-            ],
-          },
-          {
-            id: "TZ-20260408-BN2",
-            address: "Block B4, Flat 6, Lekki Gardens Phase 4, Lekki, Lagos",
-            total: 35000,
-            status: "Delivered",
-            orderDate: new Date("2026-04-08T09:12:00Z"),
-            expectedDeliveryDate: new Date("2026-04-11T12:00:00Z"),
-            items: [
-              {
-                id: "p9",
-                name: "USB-C Fast Charger 65W",
-                category: "Chargers",
-                brand: "Anker",
-                price: 25000,
-                condition: "New",
-                stock: 20,
-                imageUrl:
-                  "https://images.unsplash.com/photo-1622445262465-2481c4574875?auto=format&fit=crop&w=800&q=80",
-                quantity: 1,
-              },
-              {
-                id: "p12",
-                name: "Heavy Duty Phone Case",
-                category: "Case Protector",
-                brand: "Spigen",
-                price: 10000,
-                condition: "New",
-                stock: 15,
-                imageUrl:
-                  "https://images.unsplash.com/photo-1605787020600-b9ebd5df1d07?auto=format&fit=crop&w=800&q=80",
-                quantity: 1,
-              },
-            ],
-          },
-          {
-            id: "TZ-20260512-CQ4",
-            address:
-              "Apartment 3A, Tower C, Eko Atlantic City, Victoria Island, Lagos",
-            total: 724000,
-            status: "Delivered",
-            orderDate: new Date("2026-05-12T14:45:00Z"),
-            expectedDeliveryDate: new Date("2026-05-15T15:10:00Z"),
-            items: [
-              {
-                id: "p3",
-                name: "iPhone 13 Pro",
-                category: "Phones",
-                brand: "Apple",
-                price: 699000,
-                condition: "Used",
-                stock: 8,
-                imageUrl:
-                  "https://images.unsplash.com/photo-1632661674596-df8be070a5c5?auto=format&fit=crop&w=800&q=80",
-                quantity: 1,
-              },
-              {
-                id: "p9",
-                name: "USB-C Fast Charger 65W",
-                category: "Chargers",
-                brand: "Anker",
-                price: 25000,
-                condition: "New",
-                stock: 20,
-                imageUrl:
-                  "https://images.unsplash.com/photo-1622445262465-2481c4574875?auto=format&fit=crop&w=800&q=80",
-                quantity: 1,
-              },
-            ],
-          },
-          {
-            id: "TZ-20260528-DY5",
-            address: "67, Adeniran Ogunsanya Street, Surulere, Lagos",
-            total: 3514000,
-            status: "In Transit",
-            orderDate: new Date("2026-05-28T16:30:00Z"),
-            expectedDeliveryDate: new Date("2026-06-01T12:00:00Z"),
-            items: [
-              {
-                id: "p1",
-                name: 'MacBook Pro 16" M2 Max',
-                category: "Laptops",
-                brand: "Apple",
-                price: 3499000,
-                condition: "New",
-                stock: 5,
-                imageUrl:
-                  "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=800&q=80",
-                quantity: 1,
-              },
-              {
-                id: "p8",
-                name: "Logitech Pebble Mouse",
-                category: "Mouse",
-                brand: "Logitech",
-                price: 15000,
-                condition: "New",
-                stock: 12,
-                imageUrl:
-                  "https://images.unsplash.com/photo-1615663245857-ac93bb7c39e7?auto=format&fit=crop&w=800&q=80",
-                quantity: 1,
-              },
-            ],
-          },
-        ];
-        setOrders(seedOrders);
-        localStorage.setItem(
-          `tizzitech_orders_${user.uid}`,
-          JSON.stringify(seedOrders),
-        );
       }
     }
   }, [user]);
+
+  // Poll for guest order updates
+
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+    if (!user && orders.length > 0) {
+      const fetchStatuses = async () => {
+        try {
+          const orderIds = orders.map(o => o.id);
+          const res = await fetch('/api/orders/statuses', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderIds })
+          });
+          const data = await res.json();
+          if (data.success && data.statuses) {
+            let changed = false;
+            const updatedOrders = orders.map(o => {
+              if (data.statuses[o.id] && data.statuses[o.id] !== o.status) {
+                changed = true;
+                return { ...o, status: data.statuses[o.id] as any };
+              }
+              return o;
+            });
+            if (changed) {
+              setOrders(updatedOrders);
+              localStorage.setItem('tizzitech_guest_orders', JSON.stringify(updatedOrders));
+            }
+          }
+        } catch (e: any) {
+          if (e.message !== 'Failed to fetch') {
+            console.error("Error fetching guest order statuses:", e);
+          }
+        }
+      };
+      // Fetch immediately and then poll
+      fetchStatuses();
+      intervalId = setInterval(fetchStatuses, 5000);
+    }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [user, orders]);
 
   // Persist order updates to storage
   useEffect(() => {
@@ -253,12 +311,16 @@ export default function App() {
     }
   }, [orders, user]);
 
+  // Sync cart to local storage
+  useEffect(() => {
+    localStorage.setItem('tizzitech_cart', JSON.stringify(cart));
+  }, [cart]);
+
   // Clear user-specific data on logout
   useEffect(() => {
     if (!user) {
       setOrders([]);
-      setCart([]);
-      if (view === "profile" || view === "tracking" || view === "admin") {
+      if (view === "profile" || view === "tracking") {
         setView("store");
       }
     }
@@ -275,6 +337,9 @@ export default function App() {
   );
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [maxPrice, setMaxPrice] = useState<number>(highestPriceLimit);
+  const [brandsList, setBrandsList] = useState(FALLBACK_BRANDS);
+  const [categoriesList, setCategoriesList] = useState(FALLBACK_CATEGORIES);
+  const [deliveryZones, setDeliveryZones] = useState<any[]>([]);
   const [sortBy, setSortBy] = useState<"newest" | "price_asc" | "price_desc">(
     "newest",
   );
@@ -322,15 +387,6 @@ export default function App() {
   };
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-
-  // Admin Handlers
-  const updateStock = (id: string, newStock: number) => {
-    setProducts((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, stock: newStock } : item,
-      ),
-    );
-  };
 
   // Filter Logic
   const filteredProducts = useMemo(() => {
@@ -402,36 +458,42 @@ export default function App() {
       <Header
         cartCount={cartCount}
         onOpenCart={() => setIsCartOpen(true)}
-        onOpenAdmin={() => setView("admin")}
         onOpenTracking={() => setView("tracking")}
-        onOpenProfile={() => setView("profile")}
-        onOpenAuth={() => setIsAuthOpen(true)}
-        onOpenAbout={() => setView("about")}
-        onOpenTechOfTheDay={() => setView("techoftheday")}
-        onSelectCategory={(cat) => {
-          setSelectedCategory(cat);
-          setView("store");
-          setSearchQuery("");
-          setSelectedBrands([]);
-          setSelectedCondition("All");
-          setMaxPrice(highestPriceLimit);
-        }}
-        selectedCategory={selectedCategory}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        onGoHome={() => {
-          setView("store");
-          setSelectedCategory("All");
-          setSearchQuery("");
-          setSelectedBrands([]);
-          setSelectedCondition("All");
-          setMaxPrice(highestPriceLimit);
-        }}
-      />
+          onOpenProfile={() => setView("profile")}
+          onOpenAuth={() => setIsAuthOpen(true)}
+          onOpenAbout={() => setView("about")}
+          onOpenTechOfTheDay={() => setView("techoftheday")}
+          onSelectCategory={(cat) => {
+            setSelectedCategory(cat);
+            setView("store");
+            setSearchQuery("");
+            setSelectedBrands([]);
+            setSelectedCondition("All");
+            setMaxPrice(highestPriceLimit);
+          }}
+          selectedCategory={selectedCategory}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          onSearchStart={() => setView("store")}
+          onGoHome={() => {
+            setView("store");
+            setSelectedCategory("All");
+            setSearchQuery("");
+            setSelectedBrands([]);
+            setSelectedCondition("All");
+            setMaxPrice(highestPriceLimit);
+          }}
+        />
 
       <main className="flex-1 w-full bg-black relative">
         {view === "techoftheday" ? (
           <TechOfTheDay />
+        ) : view === "privacy" ? (
+          <PrivacyPolicy />
+        ) : view === "terms" ? (
+          <TermsOfService />
+        ) : view === "refund" ? (
+          <RefundPolicy />
         ) : view === "about" ? (
           <AboutUs />
         ) : view === "contact" ? (
@@ -445,10 +507,10 @@ export default function App() {
             onGoBack={() => setView("store")}
             products={products}
             setProducts={setProducts}
+            onRequireAuth={() => setIsAuthOpen(true)}
           />
         ) : view === "checkout" ? (
-          <CheckoutView
-            cart={cart}
+          <CheckoutView cart={cart} deliveryZones={deliveryZones}
             hasPastOrders={orders.length > 0}
             onComplete={(newOrder) => {
               setOrders((prev) => [newOrder, ...prev]);
@@ -457,14 +519,16 @@ export default function App() {
             }}
             onCancel={() => setView("store")}
           />
-        ) : view === "admin" ? (
-          <div className="relative z-10 pt-8 pb-16">
-            <AdminDashboard products={products} onUpdateStock={updateStock} />
-          </div>
         ) : view === "tracking" ? (
           <div className="relative z-10 pt-8 pb-16">
             <TrackingDashboard orders={orders} />
           </div>
+        ) : view === "reset-password" && resetToken ? (
+          <ResetPasswordView 
+            token={resetToken} 
+            onSuccess={() => setView("store")}
+            onCancel={() => setView("store")}
+          />
         ) : view === "profile" ? (
           <div className="relative z-10 pt-8 pb-16">
             <UserProfileDashboard orders={orders} />
@@ -676,6 +740,9 @@ export default function App() {
         )}
       </main>
 
+      {/* Newsletter */}
+      <Newsletter />
+
       {/* Footer */}
       <footer className="w-full bg-black border-t border-neutral-900 py-16 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-4 gap-8">
@@ -781,6 +848,26 @@ export default function App() {
               >
                 FAQs
               </button>
+            
+              <button
+                onClick={() => setView("privacy")}
+                className="text-left hover:text-white transition-colors"
+              >
+                Privacy Policy
+              </button>
+              <button
+                onClick={() => setView("terms")}
+                className="text-left hover:text-white transition-colors"
+              >
+                Terms of Service
+              </button>
+              <button
+                onClick={() => setView("refund")}
+                className="text-left hover:text-white transition-colors"
+              >
+                Refund Policy
+              </button>
+
             </div>
           </div>
           <div>
@@ -805,7 +892,10 @@ export default function App() {
             </div>
           </div>
         </div>
-      </footer>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-16 pt-8 border-t border-neutral-900 text-center text-sm text-neutral-500">
+          Copyright &copy; 2026 Tizzitech Team. All rights reserved.
+        </div>
+</footer>
 
       <CartDrawer
         isOpen={isCartOpen}

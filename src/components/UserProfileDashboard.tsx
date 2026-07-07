@@ -30,7 +30,7 @@ import {
   ArrowLeft,
   Send,
   LogOut,
-} from "lucide-react";
+X } from "lucide-react";
 import { Order, OrderStatus } from "../types";
 import { NIGERIAN_STATES, LGAS_BY_STATE } from "../utils/nigeriaLocations";
 
@@ -55,6 +55,7 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStatusFilter, setSelectedStatusFilter] =
     useState<string>("All");
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>(
     {},
   );
@@ -114,10 +115,10 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
 
   // Address subfields state
   const [addressCity, setAddressCity] = useState(
-    () => localStorage.getItem("tizz_addr_city") || "Lagos",
+    () => profile?.lga || profile?.city || localStorage.getItem("tizz_addr_city") || "Lagos",
   );
   const [addressState, setAddressState] = useState(
-    () => localStorage.getItem("tizz_addr_state") || "Lagos State",
+    () => profile?.stateLocation || localStorage.getItem("tizz_addr_state") || "Lagos State",
   );
   const [addressPost, setAddressPost] = useState(
     () => localStorage.getItem("tizz_addr_post") || "100001",
@@ -204,14 +205,19 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
 
   const handleSaveAddresses = () => {
     setIsSaving(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       localStorage.setItem("tizz_addr_city", addressCity);
       localStorage.setItem("tizz_addr_state", addressState);
       localStorage.setItem("tizz_addr_post", addressPost);
       localStorage.setItem("tizz_addr_country", addressCountry);
 
-      if (updateProfile && editAddress) {
-        updateProfile({ address: editAddress });
+      if (updateProfile) {
+        await updateProfile({ 
+          address: editAddress, 
+          lga: addressCity,
+          city: addressCity,
+          stateLocation: addressState 
+        });
       }
 
       setIsSaving(false);
@@ -220,32 +226,41 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
     }, 800);
   };
 
-  // Simulated Cancel Order function
-  const handleCancelOrder = (orderId: string) => {
+  const canCancelOrder = (order: Order) => {
+    if (order.status !== "Confirmed") return false;
+    const orderTime = new Date(order.orderDate).getTime();
+    const now = new Date().getTime();
+    return (now - orderTime) <= 60 * 60 * 1000;
+  };
+
+  const handleCancelOrder = async (orderId: string) => {
+    // Optimistic UI update
     setLocalOrders((prev) =>
       prev.map((o) =>
         o.id === orderId
           ? {
               ...o,
-              status: "Confirmed" as OrderStatus,
-              expectedDeliveryDate: new Date(),
+              status: "Cancelled" as OrderStatus,
+              isCancelled: true
             }
-          : o,
-      ),
+          : o
+      )
     );
-    // Move to cancelled section
-    const updated = localOrders.map((o) => {
-      if (o.id === orderId) {
-        // Create copies
-        const copy = { ...o };
-        // Set custom cancelled fields
-        Object.assign(copy, { isCancelled: true, status: "Cancelled" });
-        return copy;
-      }
-      return o;
-    });
-    setLocalOrders(updated as any);
     localStorage.setItem(`tizz_cancelled_order_${orderId}`, "true");
+
+    try {
+      const token = sessionStorage.getItem('tizzitech_token') || localStorage.getItem('tizzitech_token');
+      if (token) {
+        await fetch(`/api/orders/${orderId}/cancel`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+      }
+    } catch(e) {
+      console.log('Failed to cancel order on backend', e);
+    }
   };
 
   // Wishlist simulations (pull 3 highly structured mock favorites for high-end aesthetic)
@@ -832,188 +847,15 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
                         </div>
 
                         <button
-                          onClick={() => toggleOrderExpansion(order.id)}
+                          onClick={() => setSelectedOrder(order)}
                           className="bg-neutral-900 border border-neutral-800 hover:bg-neutral-800/80 text-white font-black text-[10px] uppercase tracking-widest py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 transition-all self-end sm:self-auto w-full sm:w-auto"
                         >
-                          {isExpanded ? "Collapse" : "Details"}
-                          <ChevronDown
-                            className={`w-3.5 h-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                          />
+                          View Details
                         </button>
                       </div>
                     </div>
 
                     {/* Expanded products lists and Delivery Step timeline */}
-                    {isExpanded && (
-                      <div className="mt-6 pt-6 border-t border-neutral-900 space-y-6 animate-in slide-in-from-top-4 duration-300">
-                        {/* Live shipping stage tracker */}
-                        <div className="bg-neutral-950 rounded-2xl p-5 border border-neutral-900/60">
-                          <p className="text-[10px] font-black uppercase tracking-widest text-neutral-500 mb-4 font-mono">
-                            Live Stage Tracking
-                          </p>
-                          <div className="grid grid-cols-4 gap-2 relative">
-                            {/* Progress line connection tracker */}
-                            <div className="absolute top-3 inset-x-4 h-1 bg-neutral-800 z-0">
-                              <div
-                                className="bg-blue-500 h-full transition-all duration-1000"
-                                style={{
-                                  width:
-                                    order.status === "Cancelled"
-                                      ? "0%"
-                                      : order.status === "Delivered"
-                                        ? "100%"
-                                        : order.status === "In Transit" ||
-                                            order.status === "Shipped"
-                                          ? "66%"
-                                          : order.status === "Accepted"
-                                            ? "33%"
-                                            : "5%",
-                                }}
-                              />
-                            </div>
-
-                            {/* Step details 1 */}
-                            <div className="text-center z-10">
-                              <div
-                                className={`w-7 h-7 rounded-full text-xs font-black mx-auto flex items-center justify-center transition-all ${
-                                  order.status === "Cancelled"
-                                    ? "bg-neutral-800 text-neutral-500"
-                                    : "bg-blue-600 text-white shadow-md shadow-blue-500/20"
-                                }`}
-                              >
-                                1
-                              </div>
-                              <p className="text-[8px] sm:text-[9px] font-black tracking-tight sm:tracking-wider uppercase mt-1.5 text-neutral-300 break-words line-clamp-1 sm:line-clamp-none">
-                                Confirmed
-                              </p>
-                            </div>
-
-                            {/* Step details 2 */}
-                            <div className="text-center z-10 min-w-0">
-                              <div
-                                className={`w-6 h-6 sm:w-7 sm:h-7 rounded-full text-[10px] sm:text-xs font-black mx-auto flex items-center justify-center transition-all ${
-                                  order.status !== "Confirmed" &&
-                                  order.status !== "Cancelled"
-                                    ? "bg-blue-600 text-white shadow-md"
-                                    : "bg-neutral-800 text-neutral-500"
-                                }`}
-                              >
-                                2
-                              </div>
-                              <p className="text-[8px] sm:text-[9px] font-black tracking-tight sm:tracking-wider uppercase mt-1.5 text-neutral-300 break-words line-clamp-1 sm:line-clamp-none">
-                                Dispatched
-                              </p>
-                            </div>
-
-                            {/* Step details 3 */}
-                            <div className="text-center z-10 min-w-0">
-                              <div
-                                className={`w-6 h-6 sm:w-7 sm:h-7 rounded-full text-[10px] sm:text-xs font-black mx-auto flex items-center justify-center transition-all ${
-                                  order.status === "Shipped" ||
-                                  order.status === "In Transit" ||
-                                  order.status === "Delivered"
-                                    ? "bg-blue-600 text-white shadow-md"
-                                    : "bg-neutral-800 text-neutral-500"
-                                }`}
-                              >
-                                3
-                              </div>
-                              <p className="text-[8px] sm:text-[9px] font-black tracking-tight sm:tracking-wider uppercase mt-1.5 text-neutral-300 break-words line-clamp-1 sm:line-clamp-none">
-                                In Transit
-                              </p>
-                            </div>
-
-                            {/* Step details 4 */}
-                            <div className="text-center z-10 min-w-0">
-                              <div
-                                className={`w-6 h-6 sm:w-7 sm:h-7 rounded-full text-[10px] sm:text-xs font-black mx-auto flex items-center justify-center transition-all ${
-                                  order.status === "Delivered"
-                                    ? "bg-emerald-500 text-neutral-950 font-black"
-                                    : "bg-neutral-800 text-neutral-500"
-                                }`}
-                              >
-                                {order.status === "Delivered" ? "✓" : "4"}
-                              </div>
-                              <p
-                                className={`text-[8px] sm:text-[9px] font-black tracking-tight sm:tracking-wider uppercase mt-1.5 break-words line-clamp-1 sm:line-clamp-none ${order.status === "Delivered" ? "text-emerald-400" : "text-neutral-500"}`}
-                              >
-                                Delivered
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Products List inside order */}
-                        <div className="space-y-3.5">
-                          <p className="text-[10px] font-black uppercase tracking-widest text-neutral-500 font-mono">
-                            Invoice Items list
-                          </p>
-                          {order.items.map((item, idx) => (
-                            <div
-                              key={idx}
-                              className="flex items-center justify-between gap-2 sm:gap-4 bg-neutral-900/60 border border-neutral-900 rounded-xl p-2.5 sm:p-3"
-                            >
-                              <div className="flex items-center gap-3 min-w-0 flex-1">
-                                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-neutral-950 rounded-lg overflow-hidden border border-neutral-800 flex-shrink-0">
-                                  {item.imageUrl ? (
-                                    <img
-                                      src={item.imageUrl}
-                                      alt={item.name}
-                                      className="w-full h-full object-cover"
-                                    />
-                                  ) : (
-                                    <div className="w-full h-full flex items-center justify-center text-neutral-700">
-                                      <ShoppingBag className="w-4 h-4 sm:w-5 sm:h-5" />
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="min-w-0">
-                                  <h4 className="text-xs font-bold text-white truncate">
-                                    {item.name}
-                                  </h4>
-                                  <p className="text-[9px] sm:text-[10px] text-neutral-500 font-bold uppercase mt-0.5 truncate">
-                                    {item.brand} •{" "}
-                                    <span className="text-neutral-400">
-                                      {item.condition}
-                                    </span>
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="text-right flex-shrink-0 font-mono">
-                                <p className="text-[10px] sm:text-xs font-bold text-white">
-                                  ₦
-                                  {(
-                                    item.price * item.quantity
-                                  ).toLocaleString()}
-                                </p>
-                                <p className="text-[8px] sm:text-[10px] text-neutral-500">
-                                  ₦{item.price.toLocaleString()} x{" "}
-                                  {item.quantity}
-                                </p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Cancellation feature directly from order card details */}
-                        <div className="pt-4 border-t border-neutral-900 flex justify-between items-center flex-wrap gap-4">
-                          <span className="text-[10px] text-neutral-400 font-bold font-mono">
-                            Delivery Address:{" "}
-                            {order.address ||
-                              profile?.address ||
-                              "No Address Listed"}
-                          </span>
-                          {order.status === "Confirmed" && (
-                            <button
-                              onClick={() => handleCancelOrder(order.id)}
-                              className="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/20 px-4 py-2 rounded-xl text-[10px] uppercase tracking-wider font-black transition-colors"
-                            >
-                              Cancel Order
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 );
               })}
@@ -1276,12 +1118,16 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
                 className="bg-black/40 border border-neutral-800 rounded-2xl p-4 flex flex-col justify-between"
               >
                 <div>
-                  <div className="w-full h-36 rounded-xl bg-neutral-900 overflow-hidden border border-neutral-800">
-                    <img
-                      src={item.imageUrl}
-                      alt={item.name}
-                      className="w-full h-full object-cover"
-                    />
+                  <div className="w-full h-36 rounded-xl bg-neutral-900 overflow-hidden border border-neutral-800 flex items-center justify-center">
+                    {item.imageUrl ? (
+                      <img
+                        src={item.imageUrl}
+                        alt={item.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-neutral-700 text-[10px] uppercase tracking-widest font-bold">No Img</span>
+                    )}
                   </div>
                   <p className="text-[10px] uppercase text-blue-500 tracking-wider font-bold font-mono mt-3">
                     {item.category}
@@ -1718,6 +1564,202 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
           </div>
         </div>
       </div>
+{selectedOrder && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+    <div className="bg-black border border-neutral-800 w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl p-6 md:p-8 relative">
+      <button 
+        onClick={() => setSelectedOrder(null)}
+        className="absolute top-6 right-6 p-2 bg-neutral-900 rounded-full text-white hover:bg-white hover:text-black transition-colors"
+      >
+        <X className="w-5 h-5" />
+      </button>
+
+      <h2 className="text-xl font-bold text-white mb-6 uppercase tracking-tight">Order Details</h2>
+      <div className="flex items-center justify-between mb-8 pb-4 border-b border-neutral-900">
+        <div>
+          <p className="text-xs text-neutral-500 font-mono uppercase tracking-widest mb-1">Order ID</p>
+          <p className="text-white font-mono font-bold">{selectedOrder.id}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-xs text-neutral-500 font-mono uppercase tracking-widest mb-1">Total Amount</p>
+          <p className="text-white font-bold text-lg">₦{selectedOrder.total.toLocaleString()}</p>
+        </div>
+      </div>
+      
+      <div className="space-y-8">
+        {/* Live shipping stage tracker */}
+        <div className="bg-neutral-950 rounded-2xl p-6 border border-neutral-900">
+          <p className="text-xs font-black uppercase tracking-widest text-neutral-500 mb-6 font-mono">
+            Live Stage Tracking
+          </p>
+          <div className="grid grid-cols-4 gap-2 relative">
+            {/* Progress line connection tracker */}
+            <div className="absolute top-4 inset-x-8 h-1 bg-neutral-800 z-0">
+              <div
+                className="bg-blue-500 h-full transition-all duration-1000"
+                style={{
+                  width:
+                    selectedOrder.status === "Cancelled"
+                      ? "0%"
+                      : selectedOrder.status === "Delivered"
+                        ? "100%"
+                        : selectedOrder.status === "In Transit" ||
+                            selectedOrder.status === "Shipped"
+                          ? "66%"
+                          : selectedOrder.status === "Accepted"
+                            ? "33%"
+                            : "5%",
+                }}
+              />
+            </div>
+            {/* Step details 1 */}
+            <div className="text-center z-10">
+              <div
+                className={`w-8 h-8 rounded-full text-xs font-black mx-auto flex items-center justify-center transition-all ${
+                  selectedOrder.status !== "Cancelled"
+                    ? "bg-blue-600 text-white shadow-md shadow-blue-500/20"
+                    : "bg-red-500 text-white"
+                }`}
+              >
+                {selectedOrder.status === "Cancelled" ? "X" : "1"}
+              </div>
+              <p className="text-[10px] font-black tracking-widest uppercase mt-3 text-neutral-300">
+                {selectedOrder.status === "Cancelled" ? "Cancelled" : "Confirmed"}
+              </p>
+            </div>
+            {/* Step details 2 */}
+            <div className="text-center z-10">
+              <div
+                className={`w-8 h-8 rounded-full text-xs font-black mx-auto flex items-center justify-center transition-all ${
+                  selectedOrder.status !== "Confirmed" &&
+                  selectedOrder.status !== "Cancelled"
+                    ? "bg-blue-600 text-white shadow-md shadow-blue-500/20"
+                    : "bg-neutral-900 border border-neutral-800 text-neutral-500"
+                }`}
+              >
+                2
+              </div>
+              <p className="text-[10px] font-black tracking-widest uppercase mt-3 text-neutral-300">
+                Dispatched
+              </p>
+            </div>
+            {/* Step details 3 */}
+            <div className="text-center z-10">
+              <div
+                className={`w-8 h-8 rounded-full text-xs font-black mx-auto flex items-center justify-center transition-all ${
+                  selectedOrder.status === "Shipped" ||
+                  selectedOrder.status === "In Transit" ||
+                  selectedOrder.status === "Delivered"
+                    ? "bg-blue-600 text-white shadow-md shadow-blue-500/20"
+                    : "bg-neutral-900 border border-neutral-800 text-neutral-500"
+                }`}
+              >
+                3
+              </div>
+              <p className="text-[10px] font-black tracking-widest uppercase mt-3 text-neutral-300">
+                In Transit
+              </p>
+            </div>
+            {/* Step details 4 */}
+            <div className="text-center z-10">
+              <div
+                className={`w-8 h-8 rounded-full text-xs font-black mx-auto flex items-center justify-center transition-all ${
+                  selectedOrder.status === "Delivered"
+                    ? "bg-emerald-500 text-neutral-950"
+                    : "bg-neutral-900 border border-neutral-800 text-neutral-500"
+                }`}
+              >
+                {selectedOrder.status === "Delivered" ? <Check className="w-4 h-4" /> : "4"}
+              </div>
+              <p
+                className={`text-[10px] font-black tracking-widest uppercase mt-3 ${selectedOrder.status === "Delivered" ? "text-emerald-400" : "text-neutral-500"}`}
+              >
+                Delivered
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Products List inside order */}
+        <div className="space-y-4">
+          <p className="text-xs font-black uppercase tracking-widest text-neutral-500 font-mono">
+            Invoice Items list
+          </p>
+          <div className="grid grid-cols-1 gap-3">
+            {selectedOrder.items.map((item, idx) => (
+              <div
+                key={idx}
+                className="flex items-center justify-between gap-4 bg-neutral-900/60 border border-neutral-900 rounded-xl p-4"
+              >
+                <div className="flex items-center gap-4 min-w-0 flex-1">
+                  <div className="w-14 h-14 bg-neutral-950 rounded-lg overflow-hidden border border-neutral-800 flex-shrink-0">
+                    {item.imageUrl ? (
+                      <img
+                        src={item.imageUrl}
+                        alt={item.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-neutral-700">
+                        <ShoppingBag className="w-6 h-6" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <h4 className="text-sm font-bold text-white truncate">
+                      {item.name}
+                    </h4>
+                    <p className="text-[10px] text-neutral-500 font-bold uppercase mt-1">
+                      {item.brand} •{" "}
+                      <span className="text-neutral-400">
+                        {item.condition}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right flex-shrink-0 font-mono">
+                  <p className="text-sm font-bold text-white">
+                    ₦
+                    {(
+                      item.price * item.quantity
+                    ).toLocaleString()}
+                  </p>
+                  <p className="text-[10px] text-neutral-500 mt-1">
+                    ₦{item.price.toLocaleString()} x{" "}
+                    {item.quantity}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Delivery Address & Cancellation */}
+        <div className="pt-6 border-t border-neutral-900 flex justify-between items-center flex-wrap gap-4">
+          <div>
+            <p className="text-[10px] text-neutral-500 font-black uppercase tracking-widest font-mono mb-1">
+              Delivery Address
+            </p>
+            <p className="text-sm text-neutral-300 font-mono">
+              {selectedOrder.address || profile?.address || "No Address Listed"}
+            </p>
+          </div>
+          {canCancelOrder(selectedOrder) && (
+            <button
+              onClick={() => {
+                handleCancelOrder(selectedOrder.id);
+                setSelectedOrder(null);
+              }}
+              className="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white border border-red-500/20 px-6 py-3 rounded-xl text-xs uppercase tracking-wider font-black transition-colors"
+            >
+              Cancel Order
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  </div>
+)}
     </div>
   );
 }
