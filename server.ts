@@ -889,13 +889,20 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       // Send welcome email
       const welcomeSubject = "Welcome to Tizzitech!";
       const welcomeHtml = `
-        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #fff; padding: 20px;">
-          <h2 style="color: #007bff;">Hello ${firstName},</h2>
-          <p>Welcome to Tizzitech! Your account has been successfully created.</p>
-          <p>You can now log in to track your orders, save your shipping details, and shop faster.</p>
-          <br>
-          <p>Best regards,</p>
-          <p>The Tizzitech Team</p>
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background-color: #111; color: #eee; padding: 40px 30px; border-radius: 12px; border: 1px solid #333; text-align: center;">
+          <div style="margin-bottom: 30px;">
+            <h1 style="color: #3b82f6; font-size: 28px; margin-bottom: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">Welcome to Tizzitech</h1>
+            <p style="color: #888; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">Your Trusted Tech Destination</p>
+          </div>
+          <div style="background-color: #1a1a1a; padding: 25px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #222;">
+            <p style="font-size: 16px; line-height: 1.6; margin-bottom: 15px; text-align: left;">Hello <strong>${firstName}</strong>,</p>
+            <p style="font-size: 16px; line-height: 1.6; margin-bottom: 15px; text-align: left;">Welcome to <strong>Tizzitech Online Store</strong> — the store you can trust with all your tech accessories, from laptops and phones to chargers, power banks, and so much more.</p>
+            <p style="font-size: 16px; line-height: 1.6; margin-bottom: 0; text-align: left;">We hope that you enjoy shopping with us!</p>
+          </div>
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #333; color: #666; font-size: 12px;">
+            <p style="margin-bottom: 5px;">Best regards,</p>
+            <p style="color: #aaa; font-weight: bold; font-size: 14px;">The Tizzitech Team</p>
+          </div>
         </div>
       `;
       sendEmail(email, welcomeSubject, welcomeHtml).catch(err => console.error("Async email failed:", err));
@@ -928,13 +935,20 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
   // Send welcome email
   const welcomeSubject = "Welcome to Tizzitech!";
   const welcomeHtml = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #fff; padding: 20px;">
-      <h2 style="color: #007bff;">Hello ${firstName},</h2>
-      <p>Welcome to Tizzitech! Your account has been successfully created.</p>
-      <p>You can now log in to track your orders, save your shipping details, and shop faster.</p>
-      <br>
-      <p>Best regards,</p>
-      <p>The Tizzitech Team</p>
+    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background-color: #111; color: #eee; padding: 40px 30px; border-radius: 12px; border: 1px solid #333; text-align: center;">
+      <div style="margin-bottom: 30px;">
+        <h1 style="color: #3b82f6; font-size: 28px; margin-bottom: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">Welcome to Tizzitech</h1>
+        <p style="color: #888; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">Your Trusted Tech Destination</p>
+      </div>
+      <div style="background-color: #1a1a1a; padding: 25px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #222;">
+        <p style="font-size: 16px; line-height: 1.6; margin-bottom: 15px; text-align: left;">Hello <strong>${firstName}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6; margin-bottom: 15px; text-align: left;">Welcome to <strong>Tizzitech Online Store</strong> — the store you can trust with all your tech accessories, from laptops and phones to chargers, power banks, and so much more.</p>
+        <p style="font-size: 16px; line-height: 1.6; margin-bottom: 0; text-align: left;">We hope that you enjoy shopping with us!</p>
+      </div>
+      <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #333; color: #666; font-size: 12px;">
+        <p style="margin-bottom: 5px;">Best regards,</p>
+        <p style="color: #aaa; font-weight: bold; font-size: 14px;">The Tizzitech Team</p>
+      </div>
     </div>
   `;
   sendEmail(email, welcomeSubject, welcomeHtml).catch(err => console.error("Async email failed:", err));
@@ -1039,13 +1053,20 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
           // Send welcome email for new Google Auth users
           const welcomeSubject = "Welcome to Tizzitech!";
           const welcomeHtml = `
-            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #fff; padding: 20px;">
-              <h2 style="color: #007bff;">Hello ${firstName},</h2>
-              <p>Welcome to Tizzitech! Your account has been successfully created via Google.</p>
-              <p>You can now log in to track your orders, save your shipping details, and shop faster.</p>
-              <br>
-              <p>Best regards,</p>
-              <p>The Tizzitech Team</p>
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background-color: #111; color: #eee; padding: 40px 30px; border-radius: 12px; border: 1px solid #333; text-align: center;">
+              <div style="margin-bottom: 30px;">
+                <h1 style="color: #3b82f6; font-size: 28px; margin-bottom: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">Welcome to Tizzitech</h1>
+                <p style="color: #888; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">Your Trusted Tech Destination</p>
+              </div>
+              <div style="background-color: #1a1a1a; padding: 25px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #222;">
+                <p style="font-size: 16px; line-height: 1.6; margin-bottom: 15px; text-align: left;">Hello <strong>${firstName}</strong>,</p>
+                <p style="font-size: 16px; line-height: 1.6; margin-bottom: 15px; text-align: left;">Welcome to <strong>Tizzitech Online Store</strong> — the store you can trust with all your tech accessories, from laptops and phones to chargers, power banks, and so much more.</p>
+                <p style="font-size: 16px; line-height: 1.6; margin-bottom: 0; text-align: left;">We hope that you enjoy shopping with us!</p>
+              </div>
+              <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #333; color: #666; font-size: 12px;">
+                <p style="margin-bottom: 5px;">Best regards,</p>
+                <p style="color: #aaa; font-weight: bold; font-size: 14px;">The Tizzitech Team</p>
+              </div>
             </div>
           `;
           sendEmail(email, welcomeSubject, welcomeHtml).catch(err => console.error("Async email failed:", err));
@@ -1080,13 +1101,20 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
       // Send welcome email for new Google Auth users
       const welcomeSubject = "Welcome to Tizzitech!";
       const welcomeHtml = `
-        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #fff; padding: 20px;">
-          <h2 style="color: #007bff;">Hello ${firstName},</h2>
-          <p>Welcome to Tizzitech! Your account has been successfully created via Google.</p>
-          <p>You can now log in to track your orders, save your shipping details, and shop faster.</p>
-          <br>
-          <p>Best regards,</p>
-          <p>The Tizzitech Team</p>
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background-color: #111; color: #eee; padding: 40px 30px; border-radius: 12px; border: 1px solid #333; text-align: center;">
+          <div style="margin-bottom: 30px;">
+            <h1 style="color: #3b82f6; font-size: 28px; margin-bottom: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px;">Welcome to Tizzitech</h1>
+            <p style="color: #888; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">Your Trusted Tech Destination</p>
+          </div>
+          <div style="background-color: #1a1a1a; padding: 25px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #222;">
+            <p style="font-size: 16px; line-height: 1.6; margin-bottom: 15px; text-align: left;">Hello <strong>${firstName}</strong>,</p>
+            <p style="font-size: 16px; line-height: 1.6; margin-bottom: 15px; text-align: left;">Welcome to <strong>Tizzitech Online Store</strong> — the store you can trust with all your tech accessories, from laptops and phones to chargers, power banks, and so much more.</p>
+            <p style="font-size: 16px; line-height: 1.6; margin-bottom: 0; text-align: left;">We hope that you enjoy shopping with us!</p>
+          </div>
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #333; color: #666; font-size: 12px;">
+            <p style="margin-bottom: 5px;">Best regards,</p>
+            <p style="color: #aaa; font-weight: bold; font-size: 14px;">The Tizzitech Team</p>
+          </div>
         </div>
       `;
       sendEmail(email, welcomeSubject, welcomeHtml).catch(err => console.error("Async email failed:", err));
