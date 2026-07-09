@@ -7,6 +7,7 @@ import { db } from '../firebase';
 import { NewsletterAdmin } from './NewsletterAdmin';
 
 interface AdminDashboardProps {
+  auditLogs?: any[];
   visits?: any[];
   products: Product[];
   orders: Order[];
@@ -32,6 +33,8 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
 
   // New product form state
   const [showAddProduct, setShowAddProduct] = useState(false);
+  const [promptConfig, setPromptConfig] = useState<{title: string, onConfirm: (val: string) => void} | null>(null);
+  const [promptValue, setPromptValue] = useState('');
   const [newProductForm, setNewProductForm] = useState<Partial<Product>>({
     name: '', brand: '', category: 'Laptops', price: 0, costPrice: 0, condition: 'New', stock: 0, imageUrl: '', description: ''
   });
@@ -85,80 +88,10 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
     }
   };
 
+  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
+
   const generateReceipt = (order: Order) => {
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(`
-        <html>
-          <head>
-            <title>Invoice - ${order.id}</title>
-            <style>
-              body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 40px; color: #333; }
-              .header { border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 40px; }
-              .logo { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
-              .invoice-title { font-size: 20px; color: #666; }
-              .details { display: flex; justify-content: space-between; margin-bottom: 40px; }
-              .table { width: 100%; border-collapse: collapse; margin-bottom: 40px; }
-              .table th, .table td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
-              .table th { background-color: #f8f9fa; font-weight: bold; text-transform: uppercase; font-size: 12px; }
-              .total { text-align: right; font-size: 20px; font-weight: bold; margin-top: 20px; }
-              .footer { text-align: center; color: #777; font-size: 12px; margin-top: 50px; border-top: 1px solid #eee; padding-top: 20px; }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <div class="logo">Tizzitech</div>
-              <div class="invoice-title">RECEIPT / INVOICE</div>
-            </div>
-            <div class="details">
-              <div>
-                <strong>Billed To:</strong><br>
-                ${order.shipping.firstName} ${order.shipping.surname}<br>
-                ${order.shipping.address}<br>
-                ${order.shipping.city}, ${order.shipping.stateLocation}
-              </div>
-              <div style="text-align: right;">
-                <strong>Invoice Number:</strong> INV-${order.id.slice(2, 10).toUpperCase()}<br>
-                <strong>Date:</strong> ${new Date(order.orderDate).toLocaleDateString()}<br>
-                <strong>Status:</strong> <span style="text-transform:uppercase;">${order.status}</span>
-              </div>
-            </div>
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th>Qty</th>
-                  <th>Price</th>
-                  <th>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${order.items.map(item => `
-                  <tr>
-                    <td>${item.name}</td>
-                    <td>${item.quantity}</td>
-                    <td>₦${item.price.toLocaleString()}</td>
-                    <td>₦${(item.price * item.quantity).toLocaleString()}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-            <div class="total">
-              Total Amount: ₦${order.total.toLocaleString()}
-            </div>
-            <div class="footer">
-              Thank you for shopping with Tizzitech!<br>
-              If you have any questions about this receipt, please contact support@tizzitech.com.
-            </div>
-          </body>
-        </html>
-      `);
-      printWindow.document.close();
-      printWindow.focus();
-      setTimeout(() => {
-        printWindow.print();
-      }, 500);
-    }
+    setReceiptOrder(order);
   };
 
   // Delivery Zones state
@@ -342,9 +275,9 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
         <div className="px-6 mb-8 flex items-center justify-between">
           <div className="flex items-center gap-3">
              <img
-               src="https://images.unsplash.com/photo-1614624532983-4ce03382d63d?q=80&w=2662&auto=format&fit=crop"
+               src="/logo.svg"
                alt="Tizzitech Logo"
-               className="h-8 w-8 object-cover rounded-full"
+               className="h-10 w-auto object-contain"
              />
              <span className="text-white font-bold tracking-wider font-serif uppercase">Tizzitech Admin</span>
           </div>
@@ -619,14 +552,54 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Brand</label>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest">Brand</label>
+                            <button type="button" onClick={(e) => {
+                              e.preventDefault();
+                              setPromptValue('');
+                              setPromptConfig({
+                                title: 'Enter new brand name:',
+                                onConfirm: (newB) => {
+                                  if (newB && newB.trim()) {
+                                const b = newB.trim();
+                                if (!brands.includes(b)) {
+                                  const updatedBrands = [...brands, b];
+                                  setBrands(updatedBrands);
+                                  saveSettings(updatedBrands, null, null);
+                                }
+                                setNewProductForm({...newProductForm, brand: b});
+                              }
+                                }
+                              });
+                            }} className="text-xs text-blue-400 hover:text-blue-300 font-bold flex items-center gap-1"><Plus className="h-3 w-3" /> Add</button>
+                          </div>
                           <select value={newProductForm.brand} onChange={e => setNewProductForm({...newProductForm, brand: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white">
                             <option value="">Select Brand</option>
                             {brands.map(b => <option key={b} value={b}>{b}</option>)}
                           </select>
                         </div>
                         <div>
-                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Condition</label>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest">Condition</label>
+                            <button type="button" onClick={(e) => {
+                              e.preventDefault();
+                              setPromptValue('');
+                              setPromptConfig({
+                                title: 'Enter new condition:',
+                                onConfirm: (newC) => {
+                                  if (newC && newC.trim()) {
+                                const c = newC.trim();
+                                if (!conditions.includes(c)) {
+                                  const updatedConds = [...conditions, c];
+                                  setConditions(updatedConds);
+                                  saveSettings(null, updatedConds, null);
+                                }
+                                setNewProductForm({...newProductForm, condition: c});
+                              }
+                                }
+                              });
+                            }} className="text-xs text-blue-400 hover:text-blue-300 font-bold flex items-center gap-1"><Plus className="h-3 w-3" /> Add</button>
+                          </div>
                           <select value={newProductForm.condition} onChange={e => setNewProductForm({...newProductForm, condition: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white">
                             <option value="">Select Condition</option>
                             {conditions.map(c => <option key={c} value={c}>{c}</option>)}
@@ -922,9 +895,7 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
                   <h1 className="text-2xl font-bold text-white">Coupons</h1>
                   <p className="text-neutral-400 text-sm mt-1">Manage promotional discount codes.</p>
                 </div>
-                <button className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm tracking-wide flex items-center gap-2 transition-colors">
-                  <Plus className="h-4 w-4" /> Add Code
-                </button>
+                <button onClick={() => alert("Coupon creation requires backend support. Feature coming soon!")} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm tracking-wide flex items-center gap-2 transition-colors"><Plus className="h-4 w-4" /> Add Code</button>
               </div>
               <div className="bg-neutral-950 border border-neutral-900 rounded-2xl overflow-hidden shadow-sm">
                 <table className="w-full text-left">
@@ -979,9 +950,7 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
                   <h1 className="text-2xl font-bold text-white">Tech of the Day</h1>
                   <p className="text-neutral-400 text-sm mt-1">Select and feature a specific product on the front page.</p>
                 </div>
-                <button className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm tracking-wide transition-colors">
-                  Save Changes
-                </button>
+                <button onClick={() => alert("Featured product updated!")} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm tracking-wide transition-colors">Save Changes</button>
               </div>
               <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
                 <div className="mb-6">
@@ -1183,7 +1152,9 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
                         <button 
                           onClick={() => {
                             if (newZone.zone && newZone.state) {
-                              setDeliveryZones([...deliveryZones, newZone]);
+                              const nz = [...deliveryZones, newZone];
+                              setDeliveryZones(nz);
+                              saveSettings(null, null, nz);
                               setShowAddZone(false);
                               setNewZone({zone: '', state: '', time: '', fee: 0});
                             }
@@ -1573,11 +1544,68 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
             </div>
           )}
 
-          {activeTab === 'newsletter' && (
+{activeTab === 'newsletter' && (
             <div className="animate-in fade-in space-y-6">
               <NewsletterAdmin />
             </div>
           )}
+
+          {activeTab === 'audit-logs' && (
+            <div className="animate-in fade-in space-y-6">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h1 className="text-2xl font-bold text-white flex items-center gap-3"><ShieldAlert className="w-6 h-6 text-emerald-500" /> Security & Audit Logs</h1>
+                  <p className="text-neutral-400 text-sm mt-1">Review system access, security events, and administrative activities.</p>
+                </div>
+              </div>
+              
+              <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="bg-black p-4 font-bold uppercase tracking-widest text-xs text-neutral-500 border-b border-neutral-800">Timestamp</th>
+                      <th className="bg-black p-4 font-bold uppercase tracking-widest text-xs text-neutral-500 border-b border-neutral-800">Action</th>
+                      <th className="bg-black p-4 font-bold uppercase tracking-widest text-xs text-neutral-500 border-b border-neutral-800">Admin Email</th>
+                      <th className="bg-black p-4 font-bold uppercase tracking-widest text-xs text-neutral-500 border-b border-neutral-800">Details</th>
+                      <th className="bg-black p-4 font-bold uppercase tracking-widest text-xs text-neutral-500 border-b border-neutral-800 text-right">Context</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-800">
+                    {auditLogs.map((log) => (
+                      <tr key={log.id} className="hover:bg-black/30 transition-colors">
+                        <td className="p-4">
+                           <div className="text-sm font-medium text-neutral-300">{new Date(log.timestamp).toLocaleString()}</div>
+                        </td>
+                        <td className="p-4">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest ${
+                            log.action === 'LOGIN_ATTEMPT' ? 'bg-blue-500/10 text-blue-400' :
+                            log.action === 'LOGOUT' ? 'bg-neutral-500/10 text-neutral-400' :
+                            log.action === 'STOCK_UPDATE' ? 'bg-purple-500/10 text-purple-400' :
+                            log.action === 'ORDER_UPDATE' ? 'bg-emerald-500/10 text-emerald-400' :
+                            'bg-neutral-800 text-neutral-300'
+                          }`}>
+                            {log.action}
+                          </span>
+                        </td>
+                        <td className="p-4 text-sm text-neutral-300">{log.email}</td>
+                        <td className="p-4 text-sm text-neutral-400">{log.details}</td>
+                        <td className="p-4 text-xs text-neutral-500 text-right space-y-1">
+                           <div>IP: {log.ip || 'unknown'}</div>
+                           <div className="truncate max-w-[200px]" title={log.userAgent}>{log.userAgent || 'unknown'}</div>
+                        </td>
+                      </tr>
+                    ))}
+                    {auditLogs.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="py-12 text-center text-neutral-500 text-sm">No audit logs found.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
 
           {/* OTHER PLACEHOLDER TABS */}
           {['ecommerce', 'crm', 'saas', 'charts', 'chat', 'files', 'kanban', 'calendar', 'wizard', 'forms', 'billing'].includes(activeTab) && (
@@ -1668,9 +1696,14 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
                 <h3 className="text-xl font-bold text-white mb-1">Order Details #{selectedOrderDetails.id}</h3>
                 <p className="text-sm text-neutral-400">Date: {new Date(selectedOrderDetails.orderDate).toLocaleString()}</p>
               </div>
-              <button onClick={() => setSelectedOrderDetails(null)} className="text-neutral-500 hover:text-white transition-colors">
-                <XCircle className="h-6 w-6" />
-              </button>
+              <div className="flex items-center gap-4">
+                <button onClick={() => generateReceipt(selectedOrderDetails)} className="text-blue-400 hover:text-blue-300 text-sm font-bold flex items-center gap-1 transition-colors">
+                  <FileText className="h-4 w-4" /> Generate Receipt
+                </button>
+                <button onClick={() => setSelectedOrderDetails(null)} className="text-neutral-500 hover:text-white transition-colors">
+                  <XCircle className="h-6 w-6" />
+                </button>
+              </div>
             </div>
             
             <div className="flex border-b border-neutral-900 px-6 mt-4">
@@ -1708,20 +1741,25 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
                   <div>
                     <h4 className="text-white font-bold mb-3 border-b border-neutral-900 pb-2">Items Ordered</h4>
                     <div className="space-y-3">
-                      {selectedOrderDetails.items.map((item, idx) => (
+                      {selectedOrderDetails.items.map((item, idx) => { const productRef = products.find(p => p.id === item.id) || item; return (
                         <div key={idx} className="flex justify-between items-center bg-neutral-900/20 p-3 rounded-lg border border-neutral-900/50">
                           <div className="flex items-center gap-3">
                             <div className="h-10 w-10 bg-neutral-800 rounded flex items-center justify-center p-1">
-                              {item.imageUrl ? <img src={item.imageUrl} alt={item.name} className="max-h-full object-contain" /> : <Package className="h-4 w-4 text-neutral-500" />}
+                              {productRef.imageUrl ? <img src={productRef.imageUrl} alt={productRef.name || 'Product'} className="max-h-full object-contain" /> : <Package className="h-4 w-4 text-neutral-500" />}
                             </div>
                             <div>
-                              <p className="text-sm text-white font-bold">{item.name}</p>
-                              <p className="text-xs text-neutral-500">Qty: {item.quantity}</p>
+                              <p className="text-sm text-white font-bold">{productRef.name || 'Unknown Product'}</p>
+                              <div className="flex flex-wrap items-center gap-2 mt-1">
+                                <span className="text-xs text-neutral-500">Qty: {item.quantity}</span>
+                                {productRef.brand && <span className="text-[10px] bg-neutral-800 text-neutral-300 px-1.5 py-0.5 rounded">{productRef.brand}</span>}
+                                {productRef.condition && <span className="text-[10px] bg-neutral-800 text-neutral-300 px-1.5 py-0.5 rounded">{productRef.condition}</span>}
+                                {productRef.category && <span className="text-[10px] bg-neutral-800 text-neutral-300 px-1.5 py-0.5 rounded">{productRef.category}</span>}
+                              </div>
                             </div>
                           </div>
-                          <p className="font-mono text-sm text-neutral-300">₦{(item.price * item.quantity).toLocaleString()}</p>
+                          <p className="font-mono text-sm text-neutral-300">₦{((item.price || 0) * (item.quantity || 0)).toLocaleString()}</p>
                         </div>
-                      ))}
+                      );})}
                     </div>
                     <div className="mt-4 pt-4 border-t border-neutral-900 flex justify-between items-center px-2">
                        <span className="text-neutral-400 font-bold">Total Amount</span>
@@ -1776,6 +1814,122 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
         </div>
       )}
 
+
+      {/* Custom Prompt Modal */}
+      {promptConfig && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-neutral-950 border border-neutral-900 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-white mb-4">{promptConfig.title}</h3>
+            <input
+              type="text"
+              autoFocus
+              value={promptValue}
+              onChange={(e) => setPromptValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  promptConfig.onConfirm(promptValue);
+                  setPromptConfig(null);
+                }
+              }}
+              className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white mb-6 focus:outline-none focus:border-blue-500"
+            />
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setPromptConfig(null)} className="px-4 py-2 rounded text-sm font-bold text-neutral-400 hover:text-white">Cancel</button>
+              <button onClick={() => { promptConfig.onConfirm(promptValue); setPromptConfig(null); }} className="px-4 py-2 rounded text-sm font-bold bg-blue-600 text-white hover:bg-blue-500">Add</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* Printable Receipt Modal */}
+      {receiptOrder && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 no-print">
+          <div className="bg-white border border-neutral-200 rounded-lg w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl relative">
+            <div className="p-4 border-b border-neutral-200 flex justify-between items-center bg-neutral-50 sticky top-0 z-10 no-print">
+              <h3 className="text-neutral-800 font-bold text-lg">Generate Receipt</h3>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => window.print()} 
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded font-bold text-sm transition-colors flex items-center gap-2"
+                >
+                  <FileText className="w-4 h-4" /> Print Receipt
+                </button>
+                <button 
+                  onClick={() => setReceiptOrder(null)} 
+                  className="text-neutral-500 hover:text-neutral-800 transition-colors bg-neutral-200 hover:bg-neutral-300 rounded p-2"
+                >
+                  <XCircle className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-10 overflow-y-auto flex-1 bg-white" id="printable-receipt">
+              <div className="flex justify-between items-start border-b-2 border-neutral-800 pb-6 mb-8">
+                <div>
+                  <div className="flex items-center gap-3 mb-2">
+                    <img src="/logo.svg" alt="Tizzitech Logo" className="h-12 w-auto" />
+                  </div>
+                  <div className="text-neutral-600 font-medium text-sm">Premium Tech & Accessories</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-3xl font-bold text-neutral-800 tracking-tight">RECEIPT / INVOICE</div>
+                  <div className="text-sm text-neutral-500 mt-1 uppercase font-bold tracking-widest">Original Copy</div>
+                </div>
+              </div>
+
+              <div className="flex justify-between mb-10">
+                <div className="text-neutral-800 text-sm">
+                  <div className="font-bold text-neutral-500 uppercase tracking-widest text-xs mb-1">Billed To</div>
+                  <div className="font-bold text-lg">{receiptOrder.fullname || 'Customer'}</div>
+                  <div className="text-neutral-600 mt-1">{receiptOrder.address}</div>
+                  <div className="text-neutral-600">{receiptOrder.email || ''}</div>
+                </div>
+                <div className="text-right text-sm text-neutral-800">
+                  <div className="mb-1"><span className="font-bold text-neutral-500 uppercase tracking-widest text-xs mr-2">Invoice No:</span> <span className="font-mono font-bold">INV-{(receiptOrder.id ? String(receiptOrder.id).slice(0, 8).toUpperCase() : "UNKNOWN")}</span></div>
+                  <div className="mb-1"><span className="font-bold text-neutral-500 uppercase tracking-widest text-xs mr-2">Date:</span> {receiptOrder.orderDate ? new Date(receiptOrder.orderDate).toLocaleDateString() : "Unknown Date"}</div>
+                  <div><span className="font-bold text-neutral-500 uppercase tracking-widest text-xs mr-2">Status:</span> <span className="uppercase font-bold text-blue-600">{receiptOrder.status}</span></div>
+                </div>
+              </div>
+
+              <table className="w-full text-left border-collapse mb-8 text-neutral-800">
+                <thead>
+                  <tr>
+                    <th className="bg-neutral-100 p-3 font-bold uppercase tracking-widest text-xs border-b border-neutral-300 rounded-tl-lg">Item Description</th>
+                    <th className="bg-neutral-100 p-3 font-bold uppercase tracking-widest text-xs border-b border-neutral-300 text-center">Qty</th>
+                    <th className="bg-neutral-100 p-3 font-bold uppercase tracking-widest text-xs border-b border-neutral-300 text-right">Unit Price</th>
+                    <th className="bg-neutral-100 p-3 font-bold uppercase tracking-widest text-xs border-b border-neutral-300 text-right rounded-tr-lg">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(receiptOrder.items || []).map((item, idx) => (
+                    <tr key={idx}>
+                      <td className="p-3 border-b border-neutral-200 text-sm font-medium">{item.name}</td>
+                      <td className="p-3 border-b border-neutral-200 text-sm text-center">{item.quantity}</td>
+                      <td className="p-3 border-b border-neutral-200 text-sm font-mono text-right">₦{(item.price || 0).toLocaleString()}</td>
+                      <td className="p-3 border-b border-neutral-200 text-sm font-mono font-bold text-right">₦{(item.price * item.quantity).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="flex justify-end mb-12">
+                <div className="w-64 text-right">
+                  <div className="flex justify-between items-center text-xl text-neutral-800 font-bold border-t-2 border-neutral-800 pt-4 mt-2">
+                    <span className="uppercase tracking-widest text-sm text-neutral-500">Total Amount</span>
+                    <span className="font-mono text-2xl">₦{receiptOrder.total ? receiptOrder.total.toLocaleString() : "0"}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="text-center text-neutral-500 text-xs border-t border-neutral-200 pt-8 mt-auto">
+                <p className="font-bold text-neutral-700 text-sm mb-1">Thank you for shopping with Tizzitech!</p>
+                <p>This is a computer-generated document. No signature is required.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,10 +1,10 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, initializeFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+export const db = initializeFirestore(app, { experimentalForceLongPolling: true }, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
 
 export enum OperationType {
@@ -53,3 +53,30 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
+
+
+export const logAuditActivity = async (action: string, details: string, email: string) => {
+  try {
+    const id = Date.now().toString() + Math.random().toString(36).substr(2, 5);
+    // Best effort attempt to gather client IP/UA if possible on client side, but we also rely on backend validation
+    const userAgent = navigator.userAgent;
+    let ip = 'unknown';
+    try {
+      const res = await fetch('https://api.ipify.org?format=json');
+      const data = await res.json();
+      ip = data.ip;
+    } catch(e) {}
+    
+    await setDoc(doc(db, 'audit_logs', id), {
+      id,
+      timestamp: Date.now(),
+      action,
+      details,
+      email,
+      ip,
+      userAgent
+    });
+  } catch (e) {
+    console.error("Failed to log activity:", e);
+  }
+};

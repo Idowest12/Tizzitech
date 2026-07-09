@@ -569,7 +569,7 @@ export default function App() {
                     <div className="hidden lg:block relative">
                       <div className="aspect-[4/3] bg-neutral-900 overflow-hidden ml-[38px] flex items-center justify-center p-8">
                         <img
-                          src="https://images.unsplash.com/photo-1614624532983-4ce03382d63d?q=80&w=2662&auto=format&fit=crop"
+                          src="/logo.svg"
                           alt="Hero Featured Logo"
                           className="w-full h-full object-cover mix-blend-luminosity hover:mix-blend-normal transition-all duration-700 opacity-80 rounded-2xl"
                         />
@@ -749,9 +749,9 @@ export default function App() {
           <div>
             <div className="flex items-center gap-3 font-serif font-black text-xl tracking-tighter text-white uppercase mb-6">
               <img
-                src="https://images.unsplash.com/photo-1614624532983-4ce03382d63d?q=80&w=2662&auto=format&fit=crop"
+                src="/logo.svg"
                 alt="Tizzitech Logo"
-                className="h-6 w-6 object-cover rounded-full"
+                className="h-8 w-auto object-contain"
               />
               <span>Tizzitech</span>
             </div>

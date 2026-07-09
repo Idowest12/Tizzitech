@@ -1,51 +1,35 @@
-import React, { useState, useEffect } from 'react';
-import { AdminDashboard } from './components/AdminDashboard';
-import { Product, Order } from './types';
-import { Lock, ShieldAlert, KeyRound, ArrowLeft } from 'lucide-react';
-import { auth } from './firebase';
+const fs = require('fs');
+let code = fs.readFileSync('src/AdminApp.tsx', 'utf-8');
 
+const newImports = `
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
+`;
 
-import { collection, getDocs, doc, updateDoc, setDoc, onSnapshot } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType, logAuditActivity } from './firebase';
+code = code.replace(
+  "import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';",
+  newImports
+);
 
-
+const stateReplacements = `
 export default function AdminApp() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authStep, setAuthStep] = useState<'login' | 'otp'>('login');
   const [otpValue, setOtpValue] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
+`;
 
-    const [error, setError] = useState('');
-  const [products, setProducts] = useState<Product[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [visits, setVisits] = useState<any[]>([]);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+code = code.replace(
+  "export default function AdminApp() {\n  const [isAuthenticated, setIsAuthenticated] = useState(false);",
+  stateReplacements
+);
 
+const useeffectReplacement = `
   // Load auth state from session
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         if (user.email === 'idowutosin70@gmail.com') {
           setAdminEmail(user.email);
-          
-          try {
-            const valRes = await fetch('/api/admin/validate-session', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email: user.email })
-            });
-            const valData = await valRes.json();
-            if (valData.valid) {
-              logAuditActivity('LOGIN_ATTEMPT', 'Successful auto-login via valid session', user.email);
-              setIsAuthenticated(true);
-              return;
-            } else {
-              logAuditActivity('LOGIN_ATTEMPT', 'Session invalid or hijacked - requiring OTP', user.email);
-            }
-          } catch(e) { console.error(e); }
-
           setAuthStep('otp');
           try {
             const res = await fetch('/api/admin/send-otp', {
@@ -73,66 +57,15 @@ export default function AdminApp() {
     });
     return () => unsubscribe();
   }, []);
+`;
 
-  // Fetch admin stats and details
-  useEffect(() => {
-    let cleanup: any;
-    if (isAuthenticated) {
-      fetchData().then(c => cleanup = c);
-    }
-    return () => {
-      if (cleanup && typeof cleanup === 'function') cleanup();
-    };
-  }, [isAuthenticated]);
+code = code.replace(
+  /\/\/ Load auth state from session[\s\S]*?\}, \[\]\);/,
+  useeffectReplacement.trim()
+);
 
-const fetchData = async () => {
-    setLoading(true);
-    try {
-      const unsubProducts = onSnapshot(collection(db, 'products'), (snap) => {
-        setProducts(snap.docs.map(d => d.data() as any));
-      }, (err) => console.warn('Products read permission denied:', err.message));
-
-      const unsubOrders = onSnapshot(collection(db, 'orders'), (snap) => {
-        setOrders(snap.docs.map(d => d.data() as any));
-      }, (err) => console.warn('Orders read permission denied:', err.message));
-      
-      const unsubAuditLogs = onSnapshot(collection(db, 'audit_logs'), (snap) => {
-        const logs = snap.docs.map(d => d.data());
-        logs.sort((a, b) => b.timestamp - a.timestamp);
-        setAuditLogs(logs);
-      }, (err) => console.warn('Audit logs read permission denied:', err.message));
-
-      // Keep token fresh if needed
-      const token = await auth.currentUser?.getIdToken();
-      if (token) {
-        sessionStorage.setItem('tizzitech_admin_token', token);
-      }
-      
-      return () => {
-        unsubProducts();
-        unsubOrders();
-        unsubAuditLogs();
-      };
-    } catch (e: any) {
-      console.error("Error loading admin data:", e.message || e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (err: any) {
-      setError(err.message || 'Authentication failed.');
-    }
-  };
-  
-const handleVerifyOtp = async (e: React.FormEvent) => {
+const verifyOtpMethod = `
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
@@ -156,78 +89,16 @@ const handleVerifyOtp = async (e: React.FormEvent) => {
   };
 
   const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      sessionStorage.removeItem('tizzitech_admin_token');
-    } catch(e) {
-      console.error(e);
-    }
-  };
+`;
+
+code = code.replace(
+  "  const handleLogout = async () => {",
+  verifyOtpMethod.trim()
+);
 
 
-  // Auto-logout after 10 minutes of inactivity
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    let timeoutId;
-
-    const resetTimer = () => {
-      clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => {
-        handleLogout();
-      }, 10 * 60 * 1000); // 10 minutes
-    };
-
-    resetTimer();
-
-    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
-    const handleActivity = () => resetTimer();
-    
-    events.forEach((event) => {
-      document.addEventListener(event, handleActivity);
-    });
-
-    return () => {
-      clearTimeout(timeoutId);
-      events.forEach((event) => {
-        document.removeEventListener(event, handleActivity);
-      });
-    };
-  }, [isAuthenticated]);
-
-const handleUpdateStock = async (id: string, newStock: number) => {
-    try {
-      await updateDoc(doc(db, 'products', id), { stock: newStock });
-      setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: newStock } : p));
-      logAuditActivity('STOCK_UPDATE', `Updated stock for product ${id} to ${newStock}`, adminEmail);
-    } catch (e: any) {
-      console.error("Error updating stock:", e);
-      handleFirestoreError(e, OperationType.UPDATE, `products/${id}`);
-    }
-  };
-
-  const handleUpdateOrderStatus = async (id: string, newStatus: string) => {
-    try {
-      await updateDoc(doc(db, 'orders', id), { status: newStatus });
-      setOrders(prev => prev.map(o => o.id === id ? { ...o, status: newStatus as any } : o));
-      logAuditActivity('ORDER_UPDATE', `Updated order ${id} status to ${newStatus}`, adminEmail);
-    } catch (e: any) {
-      console.error("Error updating order status:", e);
-      handleFirestoreError(e, OperationType.UPDATE, `orders/${id}`);
-    }
-  };
-
-  const handleAddProduct = async (newProduct: Product) => {
-    try {
-      await setDoc(doc(db, 'products', newProduct.id), newProduct);
-      setProducts(prev => [...prev, newProduct]);
-    } catch (e: any) {
-      console.error("Error adding product:", e);
-      handleFirestoreError(e, OperationType.CREATE, 'products');
-    }
-  };
-
-if (!isAuthenticated) {
+const authUi = `
+  if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-black flex flex-col justify-center items-center px-4 font-sans text-neutral-300">
         <div className="w-full max-w-md bg-neutral-950 border border-neutral-900 rounded-2xl p-8 shadow-2xl relative overflow-hidden">
@@ -334,31 +205,11 @@ if (!isAuthenticated) {
       </div>
     );
   }
+`;
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-black flex flex-col justify-center items-center text-neutral-400 font-sans">
-        <div className="animate-spin rounded-full h-8 w-8 border-4 border-neutral-800 border-t-blue-500 mb-4"></div>
-        <p className="text-xs font-bold uppercase tracking-widest">Entering Core Management System...</p>
-      </div>
-    );
-  }
+code = code.replace(
+  /  if \(!isAuthenticated\) \{[\s\S]*?Exit to Storefront\n          <\/button>\n        <\/div>\n      <\/div>\n    \);\n  \}/,
+  authUi.trim()
+);
 
-  return (
-    <div className="min-h-screen bg-black flex flex-col font-sans text-neutral-300">
-      <div className="relative z-10 w-full flex-1">
-        <AdminDashboard visits={visits} auditLogs={auditLogs}
-          products={products}
-          orders={orders}
-          onUpdateStock={handleUpdateStock}
-          onUpdateOrderStatus={handleUpdateOrderStatus}
-          onAddProduct={handleAddProduct}
-          onLogout={handleLogout}
-          onGoHome={() => {
-            window.location.href = '/';
-          }}
-        />
-      </div>
-    </div>
-  );
-}
+fs.writeFileSync('src/AdminApp.tsx', code);

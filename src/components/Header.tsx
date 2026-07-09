@@ -128,7 +128,7 @@ export function Header({
         >
           {/* Logo Image */}
           <img
-            src="https://images.unsplash.com/photo-1614624532983-4ce03382d63d?q=80&w=2662&auto=format&fit=crop"
+            src="/logo.svg"
             alt="Tizzitech Logo"
             className="h-7 w-7 object-cover rounded-full"
           />
