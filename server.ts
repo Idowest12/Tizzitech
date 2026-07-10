@@ -1,5 +1,6 @@
 import fs from 'fs';
 import express from 'express';
+import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import mysql from 'mysql2/promise';
 import jwt from 'jsonwebtoken';
@@ -21,6 +22,9 @@ export const sendEmail = async (to: string, subject: string, html: string) => {
           user: process.env.SMTP_USER,
           pass: process.env.SMTP_PASS,
         },
+        tls: {
+          rejectUnauthorized: false
+        },
       });
 
       await transporter.sendMail({
@@ -32,6 +36,7 @@ export const sendEmail = async (to: string, subject: string, html: string) => {
       console.log(`[EMAIL SENT] to ${to}: ${subject}`);
     } catch (err: any) {
       console.error(`[EMAIL FAILED] to ${to}:`, err.message);
+      throw err;
     }
   } else {
     console.log(`[SIMULATED EMAIL] to ${to} | Subject: ${subject}`);
@@ -131,7 +136,7 @@ app.get('/api/debug-routes', (req, res) => {
  */
 
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, getDocs, doc, setDoc, updateDoc, getDoc, query, where, runTransaction } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, getDocs, doc, setDoc, updateDoc, getDoc, query, where, runTransaction, deleteDoc } from 'firebase/firestore';
 
 let firebaseDb: any = null;
 function getFirebaseDb() {
@@ -1529,6 +1534,9 @@ app.post('/api/admin/newsletter/send', verifyAdminToken, async (req, res) => {
           user: process.env.SMTP_USER,
           pass: process.env.SMTP_PASS,
         },
+        tls: {
+          rejectUnauthorized: false
+        }
       });
 
       // Send to all subscribers via BCC
@@ -1572,126 +1580,143 @@ app.post('/api/admin/newsletter/send', verifyAdminToken, async (req, res) => {
 
 import crypto from 'crypto';
 
-function getDocId(email) {
+function getDocId(email: string) {
   const secret = process.env.ADMIN_KEY || 'default_secret';
   return crypto.createHmac('sha256', secret).update(email).digest('hex');
 }
 
 app.post('/api/admin/send-otp', async (req, res) => {
   const { email } = req.body;
-  if (email !== 'idowutosin70@gmail.com') {
-    return res.status(403).json({ success: false, message: 'Unauthorized email' });
+  if (!email) return res.status(400).json({ success: false, message: 'Email required' });
+
+  const fbDb = getFirebaseDb();
+  if (!fbDb) return res.status(500).json({ success: false, message: 'No DB' });
+
+  try {
+    let adminDocs = await getDocs(query(collection(fbDb, 'admins'), where('email', '==', email)));
+    
+    if (adminDocs.empty) {
+      const allAdmins = await getDocs(collection(fbDb, 'admins'));
+      if (allAdmins.empty && email === 'idowutosin70@gmail.com') {
+         const dId = getDocId(email);
+         await setDoc(doc(fbDb, 'admins', dId), { email, addedAt: new Date().toISOString() });
+         adminDocs = await getDocs(query(collection(fbDb, 'admins'), where('email', '==', email)));
+      }
+    }
+
+    if (adminDocs.empty) return res.status(403).json({ success: false, message: 'Unauthorized email' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'DB Error' });
   }
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  const expires = Date.now() + 5 * 60 * 1000; // 5 minutes
+  const expires = Date.now() + 5 * 60 * 1000;
   const docId = getDocId(email);
   const secret = process.env.ADMIN_KEY || 'default_secret';
   const hashedOtp = crypto.createHmac('sha256', secret).update(otp).digest('hex');
 
-  const firebasedb = getFirebaseDb();
-  if (firebasedb) {
-    try {
-      await setDoc(doc(firebasedb, 'admin_otps', docId), { hash: hashedOtp, expires });
-    } catch(e) {
-      console.error("Failed to save OTP to Firestore", e);
-    }
-  }
+  try {
+    await setDoc(doc(fbDb, 'admin_otps', docId), { hash: hashedOtp, expires });
+  } catch(e) {}
 
   const subject = "Tizzitech Admin Portal - Your Access Code";
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #fff; padding: 20px;">
+  const html = `<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #fff; padding: 20px;">
       <h2 style="color: #007bff;">Admin Login Attempt</h2>
       <p>Please use the following 6-digit access code to securely log in to the admin portal:</p>
       <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; margin: 20px 0; color: #fff; background: #111; padding: 15px; border-radius: 8px; text-align: center;">${otp}</div>
       <p style="color: #888; font-size: 12px;">This code will expire in 5 minutes. If you did not request this, please ignore this email.</p>
-    </div>
-  `;
+    </div>`;
 
   try {
     await sendEmail(email, subject, html);
-    res.json({ success: true, message: 'OTP sent successfully' });
+    if (!process.env.SMTP_HOST || !process.env.SMTP_USER) {
+       res.json({ success: true, message: 'OTP simulated (SMTP not configured)', devOtp: otp });
+    } else {
+       res.json({ success: true, message: 'OTP sent successfully' });
+    }
   } catch (err) {
-    console.error("Failed to send OTP:", err);
-    res.json({ success: true, message: 'OTP logged', devOtp: process.env.NODE_ENV !== 'production' ? otp : undefined });
+    res.json({ success: true, message: 'OTP logged', devOtp: otp });
   }
 });
 
 app.post('/api/admin/verify-otp', async (req, res) => {
   const { email, otp } = req.body;
-  if (email !== 'idowutosin70@gmail.com') {
-    return res.status(403).json({ success: false, message: 'Unauthorized' });
+  const fbDb = getFirebaseDb();
+  if (!fbDb) return res.status(500).json({ success: false });
+
+  try {
+    let adminDocs = await getDocs(query(collection(fbDb, 'admins'), where('email', '==', email)));
+    if (adminDocs.empty) {
+      const allAdmins = await getDocs(collection(fbDb, 'admins'));
+      if (allAdmins.empty && email === 'idowutosin70@gmail.com') {
+         const dId = getDocId(email);
+         await setDoc(doc(fbDb, 'admins', dId), { email, addedAt: new Date().toISOString() });
+         adminDocs = await getDocs(query(collection(fbDb, 'admins'), where('email', '==', email)));
+      }
+    }
+    if (adminDocs.empty) return res.status(403).json({ success: false, message: 'Unauthorized' });
+  } catch (err) {
+    return res.status(500).json({ success: false });
   }
 
   const docId = getDocId(email);
-  const firebasedb = getFirebaseDb();
-  
-  if (!firebasedb) {
-    return res.status(500).json({ success: false, message: 'Database not configured' });
-  }
-
   try {
-    const snap = await getDoc(doc(firebasedb, 'admin_otps', docId));
-    if (!snap.exists()) {
-      return res.status(400).json({ success: false, message: 'No OTP requested or expired.' });
-    }
+    const snap = await getDoc(doc(fbDb, 'admin_otps', docId));
+    if (!snap.exists()) return res.status(400).json({ success: false, message: 'No OTP' });
+    
     const record = snap.data();
     if (Date.now() > record.expires) {
-      await deleteDoc(doc(firebasedb, 'admin_otps', docId));
-      return res.status(400).json({ success: false, message: 'OTP expired.' });
+      await deleteDoc(doc(fbDb, 'admin_otps', docId));
+      return res.status(400).json({ success: false, message: 'Expired' });
     }
 
     const secret = process.env.ADMIN_KEY || 'default_secret';
     const hashedOtp = crypto.createHmac('sha256', secret).update(otp).digest('hex');
 
     if (record.hash === hashedOtp) {
-      await deleteDoc(doc(firebasedb, 'admin_otps', docId));
+      await deleteDoc(doc(fbDb, 'admin_otps', docId));
       const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
       const userAgent = req.headers['user-agent'] || 'unknown';
-      
       const sessionDocId = getDocId(email + "_session");
-      await setDoc(doc(firebasedb, 'admin_sessions', sessionDocId), { ip, userAgent });
-
+      await setDoc(doc(fbDb, 'admin_sessions', sessionDocId), { ip, userAgent });
       return res.json({ success: true });
     } else {
-      return res.status(400).json({ success: false, message: 'Invalid OTP.' });
+      return res.status(400).json({ success: false, message: 'Invalid OTP' });
     }
   } catch (e) {
-    console.error("OTP Verification Error:", e);
-    return res.status(500).json({ success: false, message: 'Server error during verification.' });
+    return res.status(500).json({ success: false });
   }
 });
 
 app.post('/api/admin/validate-session', async (req, res) => {
   const { email } = req.body;
-  if (email !== 'idowutosin70@gmail.com') {
-    return res.status(403).json({ valid: false });
-  }
+  const fbDb = getFirebaseDb();
+  if (!fbDb) return res.json({ valid: false });
 
-  const firebasedb = getFirebaseDb();
-  if (!firebasedb) {
-     return res.json({ valid: false, reason: 'No DB' });
+  try {
+    const adminDocs = await getDocs(query(collection(fbDb, 'admins'), where('email', '==', email)));
+    if (adminDocs.empty) return res.status(403).json({ valid: false });
+  } catch (err) {
+    return res.status(500).json({ valid: false });
   }
 
   const sessionDocId = getDocId(email + "_session");
   try {
-    const snap = await getDoc(doc(firebasedb, 'admin_sessions', sessionDocId));
-    if (!snap.exists()) {
-      return res.json({ valid: false, reason: 'No active session' });
-    }
+    const snap = await getDoc(doc(fbDb, 'admin_sessions', sessionDocId));
+    if (!snap.exists()) return res.json({ valid: false });
+    
     const session = snap.data();
     const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
     const userAgent = req.headers['user-agent'] || 'unknown';
 
     if (session.ip !== ip || session.userAgent !== userAgent) {
-      await deleteDoc(doc(firebasedb, 'admin_sessions', sessionDocId)); // Invalidate on mismatch
-      return res.json({ valid: false, reason: 'Session hijacked or network changed' });
+      await deleteDoc(doc(fbDb, 'admin_sessions', sessionDocId));
+      return res.json({ valid: false });
     }
 
     return res.json({ valid: true });
   } catch (e) {
-     console.error("Validation error:", e);
-     return res.json({ valid: false, reason: 'Server error' });
+    return res.json({ valid: false });
   }
 });
 
@@ -1699,146 +1724,47 @@ app.post('/api/admin/logout', async (req, res) => {
   const { email } = req.body;
   if (email) {
     const sessionDocId = getDocId(email + "_session");
-    const firebasedb = getFirebaseDb();
-    if (firebasedb) {
+    const fbDb = getFirebaseDb();
+    if (fbDb) {
       try {
-        await deleteDoc(doc(firebasedb, 'admin_sessions', sessionDocId));
+        await deleteDoc(doc(fbDb, 'admin_sessions', sessionDocId));
       } catch(e) {}
     }
   }
   res.json({ success: true });
 });
 
-// ========================================================
-const adminOtps = new Map();
-const adminSessions = new Map();
-
-app.post('/api/admin/send-otp', async (req, res) => {
-  const { email } = req.body;
-  if (email !== 'idowutosin70@gmail.com') {
-    return res.status(403).json({ success: false, message: 'Unauthorized email' });
-  }
-
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  adminOtps.set(email, {
-    otp,
-    expires: Date.now() + 5 * 60 * 1000 // 5 minutes
-  });
-
-  const subject = "Tizzitech Admin Portal - Your Access Code";
-  const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #fff; padding: 20px;">
-      <h2 style="color: #007bff;">Admin Login Attempt</h2>
-      <p>Please use the following 6-digit access code to securely log in to the admin portal:</p>
-      <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; margin: 20px 0; color: #fff; background: #111; padding: 15px; border-radius: 8px; text-align: center;">${otp}</div>
-      <p style="color: #888; font-size: 12px;">This code will expire in 5 minutes. If you did not request this, please ignore this email.</p>
-    </div>
-  `;
-
-  try {
-    await sendEmail(email, subject, html);
-    res.json({ success: true, message: 'OTP sent successfully' });
-  } catch (err) {
-    console.error("Failed to send OTP:", err);
-    res.json({ success: true, message: 'OTP logged', devOtp: process.env.NODE_ENV !== 'production' ? otp : undefined });
-  }
-});
-
-app.post('/api/admin/verify-otp', (req, res) => {
-  const { email, otp } = req.body;
-  
-  if (email !== 'idowutosin70@gmail.com') {
-    return res.status(403).json({ success: false, message: 'Unauthorized' });
-  }
-
-  const record = adminOtps.get(email);
-  if (!record) {
-    return res.status(400).json({ success: false, message: 'No OTP requested or expired.' });
-  }
-
-  if (Date.now() > record.expires) {
-    adminOtps.delete(email);
-    return res.status(400).json({ success: false, message: 'OTP expired.' });
-  }
-
-  if (record.otp === otp) {
-    adminOtps.delete(email);
-    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
-    adminSessions.set(email, { ip, userAgent });
-    return res.json({ success: true });
-  } else {
-    return res.status(400).json({ success: false, message: 'Invalid OTP.' });
-  }
-});
-
-app.post('/api/admin/validate-session', (req, res) => {
-  const { email } = req.body;
-  if (email !== 'idowutosin70@gmail.com') {
-    return res.status(403).json({ valid: false });
-  }
-
-  const session = adminSessions.get(email);
-  if (!session) {
-    return res.json({ valid: false, reason: 'No active session' });
-  }
-
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
-  const userAgent = req.headers['user-agent'] || 'unknown';
-
-  if (session.ip !== ip || session.userAgent !== userAgent) {
-    adminSessions.delete(email); // Invalidate on mismatch
-    return res.json({ valid: false, reason: 'Session hijacked or network changed' });
-  }
-
-  return res.json({ valid: true });
-});
-
-app.post('/api/admin/logout', (req, res) => {
-  const { email } = req.body;
-  if (email) adminSessions.delete(email);
-  res.json({ success: true });
-});
-
-// ========================================================
-
 async function boot() {
-  // Redirect /admin to /admin.html cleanly in both regimes
   app.get('/admin', (req, res) => {
     res.redirect('/admin.html');
   });
 
-  // Vite integration middleware configuration
   if (process.env.NODE_ENV !== 'production') {
-    const { createServer: createViteServer } = await import('vite');
-    const viteInstance = await createViteServer({
+    const vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: 'spa'
+      appType: 'spa',
     });
-    app.use(viteInstance.middlewares);
+    app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    
-    // Explicit route match for /admin.html in production
-    app.get('/admin.html', (req, res) => {
-      res.sendFile(path.join(distPath, 'admin.html'));
-    });
+    app.use(express.static(distPath, { index: false }));
 
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      if (req.path.startsWith('/admin')) {
+         res.sendFile(path.join(distPath, 'admin.html'));
+      } else {
+         res.sendFile(path.join(distPath, 'index.html'));
+      }
     });
   }
 
+  // Only listen if not running on Vercel
   if (!process.env.VERCEL) {
     app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Tizzitech Full-Stack backend running on port ${PORT}`);
+      console.log(`Server running on port ${PORT}`);
     });
   }
 }
 
-if (!process.env.VERCEL) {
-  boot();
-}
-
-export default app;
+boot();
+module.exports = app;

@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Package, Plus, Search, Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, XCircle, BarChart3, FileText, Map, Star, Sliders, MapPin, DollarSign, Eye } from 'lucide-react';
+import { Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, XCircle, BarChart3, FileText, Map, Star, Sliders, MapPin, DollarSign, Eye } from 'lucide-react';
 import { Product, Order } from '../types';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, AreaChart } from 'recharts';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { NewsletterAdmin } from './NewsletterAdmin';
+import { AdminManager } from './AdminManager';
 
 interface AdminDashboardProps {
   auditLogs?: any[];
@@ -18,9 +19,9 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'newsletter';
+type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'newsletter' | 'admins';
 
-export function AdminDashboard({ products, orders, visits = [], onUpdateStock, onUpdateOrderStatus, onAddProduct, onGoHome, onLogout }: AdminDashboardProps) {
+export function AdminDashboard({ products, orders, visits = [], auditLogs = [], onUpdateStock, onUpdateOrderStatus, onAddProduct, onGoHome, onLogout }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [chartMetric, setChartMetric] = useState<'revenue' | 'orders' | 'profit'>('revenue');
   const [salesReportFilterMonth, setSalesReportFilterMonth] = useState<string>('All');
@@ -301,6 +302,7 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
           <NavItem tab="invoices" icon={FileText} label="Invoices" />
           <NavItem tab="discounts" icon={Tags} label="Coupons" />
           <NavItem tab="newsletter" icon={Mail} label="Newsletter" />
+          <NavItem tab="admins" icon={ShieldAlert} label="Administrators" />
         </div>
 
         <div className="p-4 border-t border-neutral-900 mt-auto flex-shrink-0 space-y-2">
@@ -1544,7 +1546,13 @@ export function AdminDashboard({ products, orders, visits = [], onUpdateStock, o
             </div>
           )}
 
-{activeTab === 'newsletter' && (
+{activeTab === 'admins' && (
+            <div className="p-8 animate-fade-in overflow-y-auto h-full">
+              <AdminManager />
+            </div>
+          )}
+
+          {activeTab === 'newsletter' && (
             <div className="animate-in fade-in space-y-6">
               <NewsletterAdmin />
             </div>

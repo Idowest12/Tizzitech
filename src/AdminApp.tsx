@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AdminDashboard } from './components/AdminDashboard';
 import { Product, Order } from './types';
 import { Lock, ShieldAlert, KeyRound, ArrowLeft } from 'lucide-react';
@@ -22,14 +22,13 @@ export default function AdminApp() {
   const [loading, setLoading] = useState(false);
   const [visits, setVisits] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const isManualLogin = useRef(false);
 
   // Load auth state from session
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        if (user.email === 'idowutosin70@gmail.com') {
-          setAdminEmail(user.email);
-          
+        if (user.email) {
           try {
             const valRes = await fetch('/api/admin/validate-session', {
               method: 'POST',
@@ -37,102 +36,93 @@ export default function AdminApp() {
               body: JSON.stringify({ email: user.email })
             });
             const valData = await valRes.json();
+            
             if (valData.valid) {
+              setAdminEmail(user.email);
               logAuditActivity('LOGIN_ATTEMPT', 'Successful auto-login via valid session', user.email);
               setIsAuthenticated(true);
-              return;
             } else {
-              logAuditActivity('LOGIN_ATTEMPT', 'Session invalid or hijacked - requiring OTP', user.email);
+              // Stale Firebase session without a valid custom admin session.
+              if (!isManualLogin.current) {
+                // We log them out so they can click "Sign in with Google" again.
+                await signOut(auth);
+              }
             }
           } catch(e) { console.error(e); }
-
-          setAuthStep('otp');
-          try {
-            const res = await fetch('/api/admin/send-otp', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email: user.email })
-            });
-            const data = await res.json();
-            if (data.devOtp) {
-              console.log("DEV OTP:", data.devOtp); // For dev preview
-            }
-          } catch (e) {
-            console.error("Failed to send OTP", e);
-          }
         } else {
           signOut(auth);
           setError('Unauthorized: Your email is not registered as an administrator.');
-          setIsAuthenticated(false);
-          setAuthStep('login');
         }
       } else {
-        setIsAuthenticated(false);
-        setAuthStep('login');
+        // Logged out
       }
     });
-    return () => unsubscribe();
-  }, []);
 
-  // Fetch admin stats and details
-  useEffect(() => {
-    let cleanup: any;
-    if (isAuthenticated) {
-      fetchData().then(c => cleanup = c);
-    }
+    const unsubProducts = onSnapshot(collection(db, 'products'), (snap) => {
+      setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }) as any));
+    }, (err) => console.warn('Products read permission denied:', err.message));
+
+    const unsubOrders = onSnapshot(collection(db, 'orders'), (snap) => {
+      setOrders(snap.docs.map(d => d.data() as any));
+    }, (err) => console.warn('Orders read permission denied:', err.message));
+      
+    const unsubAuditLogs = onSnapshot(collection(db, 'audit_logs'), (snap) => {
+      const logs = snap.docs.map(d => d.data());
+      logs.sort((a, b) => b.timestamp - a.timestamp);
+      setAuditLogs(logs);
+    }, (err) => console.warn('Audit logs read permission denied:', err.message));
+
     return () => {
-      if (cleanup && typeof cleanup === 'function') cleanup();
+      unsubscribe();
+      unsubProducts();
+      unsubOrders();
+      unsubAuditLogs();
     };
-  }, [isAuthenticated]);
-
-const fetchData = async () => {
-    setLoading(true);
-    try {
-      const unsubProducts = onSnapshot(collection(db, 'products'), (snap) => {
-        setProducts(snap.docs.map(d => d.data() as any));
-      }, (err) => console.warn('Products read permission denied:', err.message));
-
-      const unsubOrders = onSnapshot(collection(db, 'orders'), (snap) => {
-        setOrders(snap.docs.map(d => d.data() as any));
-      }, (err) => console.warn('Orders read permission denied:', err.message));
-      
-      const unsubAuditLogs = onSnapshot(collection(db, 'audit_logs'), (snap) => {
-        const logs = snap.docs.map(d => d.data());
-        logs.sort((a, b) => b.timestamp - a.timestamp);
-        setAuditLogs(logs);
-      }, (err) => console.warn('Audit logs read permission denied:', err.message));
-
-      // Keep token fresh if needed
-      const token = await auth.currentUser?.getIdToken();
-      if (token) {
-        sessionStorage.setItem('tizzitech_admin_token', token);
-      }
-      
-      return () => {
-        unsubProducts();
-        unsubOrders();
-        unsubAuditLogs();
-      };
-    } catch (e: any) {
-      console.error("Error loading admin data:", e.message || e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, []); // Run once on mount
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    isManualLogin.current = true;
     
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      provider.setCustomParameters({ prompt: 'select_account' }); // Force account selection
+      const cred = await signInWithPopup(auth, provider);
+      const user = cred.user;
+      
+      if (!user.email) throw new Error('No email found in Google profile');
+      
+      setAdminEmail(user.email);
+      setAuthStep('otp');
+      
+      const res = await fetch('/api/admin/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email })
+      });
+      const data = await res.json();
+      
+      if (data.devOtp) {
+        console.log("DEV OTP:", data.devOtp); // For dev preview
+        setOtpValue(data.devOtp);
+        setError("SMTP NOT CONFIGURED: Auto-filling simulated code: " + data.devOtp);
+      }
+      
+      // Keep token fresh if needed
+      const token = await user.getIdToken();
+      if (token) {
+        sessionStorage.setItem('tizzitech_admin_token', token);
+      }
     } catch (err: any) {
       setError(err.message || 'Authentication failed.');
+      setAuthStep('login');
+      signOut(auth);
+      isManualLogin.current = false;
     }
   };
-  
-const handleVerifyOtp = async (e: React.FormEvent) => {
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
@@ -157,8 +147,18 @@ const handleVerifyOtp = async (e: React.FormEvent) => {
 
   const handleLogout = async () => {
     try {
+      await fetch('/api/admin/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: adminEmail })
+      });
       await signOut(auth);
       sessionStorage.removeItem('tizzitech_admin_token');
+      setIsAuthenticated(false);
+      setAuthStep('login');
+      setOtpValue('');
+      setAdminEmail('');
+      isManualLogin.current = false;
     } catch(e) {
       console.error(e);
     }

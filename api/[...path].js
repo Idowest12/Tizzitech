@@ -1,2 +1,3 @@
-const app = require('../dist/server.cjs').default;
+const server = require('../dist/server.cjs');
+const app = server.default || server;
 module.exports = app;
