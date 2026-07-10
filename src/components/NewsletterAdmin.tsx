@@ -29,17 +29,30 @@ export function NewsletterAdmin() {
 
     setIsUploading(true);
     try {
-      const formData = new FormData();
-      formData.append('image', file);
+      // Convert file to Base64 to bypass Vercel serverless FormData limitations
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = error => reject(error);
+      });
+      reader.readAsDataURL(file);
+      const base64Data = await base64Promise;
+
       const token = sessionStorage.getItem('tizzitech_admin_token') || '';
       
       const res = await fetch('/api/admin/upload-image', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
         },
-        body: formData
+        body: JSON.stringify({ image: base64Data })
       });
+      
+      if (!res.ok && res.headers.get('content-type')?.includes('text/html')) {
+          throw new Error('Server returned HTML. Vercel payload limit (4.5MB) might be exceeded, or the route crashed.');
+      }
+      
       const data = await res.json();
       if (data.success) {
          // Insert image tag at the end of the content
@@ -161,12 +174,12 @@ export function NewsletterAdmin() {
                     }`}>
                       {sub.status}
                     </span>
-                    {sub.welcomeEmailSent === true && (
+                    {(sub.deliveryStatus === 'delivered' || sub.welcomeEmailSent === true) && (
                       <span className="text-[10px] text-blue-400 flex items-center gap-1">
                         <CheckCircle className="w-3 h-3" /> Email Sent
                       </span>
                     )}
-                    {sub.welcomeEmailSent === false && sub.emailError && (
+                    {(sub.deliveryStatus === 'failed' || sub.welcomeEmailSent === false) && sub.emailError && (
                       <span className="text-[10px] text-red-400 flex items-center gap-1" title={sub.emailError}>
                         <AlertCircle className="w-3 h-3" /> Email Failed
                       </span>

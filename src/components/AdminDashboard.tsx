@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, AlertCircle, XCircle, BarChart3, FileText, Map, Star, Sliders, MapPin, DollarSign, Eye } from 'lucide-react';
+import { Bell, Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, AlertCircle, XCircle, BarChart3, FileText, Map, Star, Sliders, MapPin, DollarSign, Eye } from 'lucide-react';
 import { Product, Order } from '../types';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, AreaChart } from 'recharts';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -23,6 +23,45 @@ type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products
 
 export function AdminDashboard({ products, orders, visits = [], auditLogs = [], onUpdateStock, onUpdateOrderStatus, onAddProduct, onGoHome, onLogout }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  const [previousOrderCount, setPreviousOrderCount] = useState<number | null>(null);
+  const [newOrderNotification, setNewOrderNotification] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (previousOrderCount !== null && orders.length > previousOrderCount) {
+      setNewOrderNotification(`New order received! Total orders: ${orders.length}`);
+      try {
+        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContext) {
+          const ctx = new AudioContext();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(880, ctx.currentTime); // A5
+          gain.gain.setValueAtTime(0.1, ctx.currentTime);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.3);
+          
+          setTimeout(() => {
+            const osc2 = ctx.createOscillator();
+            const gain2 = ctx.createGain();
+            osc2.connect(gain2);
+            gain2.connect(ctx.destination);
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(1046.50, ctx.currentTime); // C6
+            gain2.gain.setValueAtTime(0.1, ctx.currentTime);
+            osc2.start(ctx.currentTime);
+            osc2.stop(ctx.currentTime + 0.3);
+          }, 150);
+        }
+      } catch(e) {}
+      
+      const timer = setTimeout(() => setNewOrderNotification(null), 10000);
+      return () => clearTimeout(timer);
+    }
+    setPreviousOrderCount(orders.length);
+  }, [orders.length]);
   const [users, setUsers] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
 
@@ -208,17 +247,31 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
     setIsUploading(true);
     try {
       const compressedFile = await compressImage(file);
-      const formData = new FormData();
-      formData.append('image', compressedFile);
+      
+      // Convert to Base64 to bypass Vercel serverless limitations with multipart form data
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = error => reject(error);
+      });
+      reader.readAsDataURL(compressedFile);
+      const base64Data = await base64Promise;
+
       const token = sessionStorage.getItem('tizzitech_admin_token') || '';
       
       const res = await fetch('/api/admin/upload-image', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
         },
-        body: formData
+        body: JSON.stringify({ image: base64Data })
       });
+      
+      if (!res.ok && res.headers.get('content-type')?.includes('text/html')) {
+          throw new Error('Server returned HTML. Vercel payload limit might be exceeded, or route crashed.');
+      }
+      
       const data = await res.json();
       if (data.success) {
          setNewProductForm(prev => ({...prev, imageUrl: data.url}));
@@ -293,7 +346,19 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
   };
 
   return (
-    <div className="flex h-screen bg-black text-neutral-300 font-sans absolute inset-0 z-50 overflow-hidden">
+    <>
+      {newOrderNotification && (
+        <div className="fixed top-6 right-6 z-[100] animate-in slide-in-from-top-4 fade-in duration-300 flex items-center gap-3 bg-blue-500 text-white px-5 py-3 rounded-lg shadow-xl shadow-blue-500/20 border border-blue-400">
+          <Bell className="w-5 h-5 animate-pulse" />
+          <div className="font-bold text-sm">
+            {newOrderNotification}
+          </div>
+          <button onClick={() => setNewOrderNotification(null)} className="ml-2 hover:bg-blue-600 p-1 rounded-md transition-colors">
+            <XCircle className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+      <div className="flex h-screen bg-black text-neutral-300 font-sans absolute inset-0 z-50 overflow-hidden">
       {/* Sidebar */}
       <aside className="w-64 bg-neutral-950 border-r border-neutral-900 flex flex-col pt-6 h-full flex-shrink-0">
         <div className="px-6 mb-8 flex items-center justify-between">
@@ -1961,6 +2026,7 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }

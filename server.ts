@@ -74,6 +74,7 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/api/health', (req, res) => { res.json({ status: 'ok' }); });
 app.get('/api/debug-routes', (req, res) => {
   const routes = app._router.stack.filter((r: any) => r.route).map((r: any) => r.route.path);
   res.json({ routes });
@@ -807,26 +808,33 @@ app.post('/api/products', verifyAdminToken, async (req, res) => {
 });
 
 // 8a. ADMIN: UPLOAD PRODUCT IMAGE
-app.post('/api/admin/upload-image', verifyAdminToken, upload.single('image'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No image file provided.' });
-  }
+// Use express.json limit for large base64 strings
+app.post('/api/admin/upload-image', verifyAdminToken, express.json({limit: '10mb'}), upload.single('image'), async (req, res) => {
+  try {
+    let dataURI = '';
+    
+    // Check if it's sent as a JSON body (base64)
+    if (req.body && req.body.image) {
+      dataURI = req.body.image;
+    } 
+    // Fallback to multer file upload if FormData is used
+    else if (req.file) {
+      const b64 = Buffer.from(req.file.buffer).toString('base64');
+      dataURI = 'data:' + req.file.mimetype + ';base64,' + b64;
+    } else {
+      return res.status(400).json({ error: 'No image data provided.' });
+    }
 
-  // Convert buffer to Base64 string for Cloudinary upload
-  const b64 = Buffer.from(req.file.buffer).toString('base64');
-  let dataURI = 'data:' + req.file.mimetype + ';base64,' + b64;
-  
-  cloudinary.uploader.upload(dataURI, {
-    resource_type: 'auto',
-    folder: 'tizzitech_products',
-  })
-  .then((result) => {
+    const result = await cloudinary.uploader.upload(dataURI, {
+      resource_type: 'auto',
+      folder: 'tizzitech_products',
+    });
+    
     return res.json({ success: true, url: result.secure_url });
-  })
-  .catch((error) => {
+  } catch (error) {
     console.error('Cloudinary upload error:', error);
     return res.status(500).json({ error: 'Failed to upload image to Cloudinary.' });
-  });
+  }
 });
 
 // 8b. ADMIN: SEED DATABASE
@@ -936,18 +944,19 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
           </div>
         </div>
       `;
-      let welcomeEmailSent = false;
+      let deliveryStatus = 'pending';
       let emailError = null;
       try {
         await sendEmail(email, welcomeSubject, welcomeHtml);
-        welcomeEmailSent = true;
+        deliveryStatus = 'delivered';
       } catch (err: any) {
         console.error("Async email failed:", err);
         emailError = err.message;
+        deliveryStatus = 'failed';
       }
       try {
         const { updateDoc } = await import('firebase/firestore');
-        await updateDoc(doc(db, 'users', userId), { welcomeEmailSent, emailError: emailError || null });
+        await updateDoc(doc(db, 'users', userId), { deliveryStatus, emailError: emailError || null });
       } catch (e) {}
       
       return res.json({ success: true, token, user: { id: userId, email, firstName, surname, address, phone, role: 'user' } });
@@ -1112,18 +1121,19 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
               </div>
             </div>
           `;
-          let welcomeEmailSent = false;
+          let deliveryStatus = 'pending';
           let emailError = null;
           try {
             await sendEmail(email, welcomeSubject, welcomeHtml);
-            welcomeEmailSent = true;
+            deliveryStatus = 'delivered';
           } catch (err: any) {
             console.error("Async email failed:", err);
             emailError = err.message;
+            deliveryStatus = 'failed';
           }
           try {
             const { updateDoc } = await import('firebase/firestore');
-            await updateDoc(doc(db, 'users', user.id), { welcomeEmailSent, emailError: emailError || null });
+            await updateDoc(doc(db, 'users', user.id), { deliveryStatus, emailError: emailError || null });
           } catch (e) {}
         }
 
@@ -1479,18 +1489,19 @@ app.post('/api/newsletter/subscribe', apiLimiter, async (req, res) => {
           <p>- The Tizzitech Team</p>
         </div>
       `;
-      let welcomeEmailSent = false;
+      let deliveryStatus = 'pending';
       let emailError = null;
       try {
         await sendEmail(email, welcomeSubject, welcomeHtml);
-        welcomeEmailSent = true;
+        deliveryStatus = 'delivered';
       } catch (err: any) {
         console.error("Async email failed:", err);
         emailError = err.message;
+        deliveryStatus = 'failed';
       }
       try {
         const { updateDoc } = await import('firebase/firestore');
-        await updateDoc(newSubRef, { welcomeEmailSent, emailError: emailError || null });
+        await updateDoc(newSubRef, { deliveryStatus, emailError: emailError || null });
       } catch (e) {}
       
       return res.json({ success: true, message: 'Successfully subscribed' });
@@ -1710,8 +1721,8 @@ app.post('/api/admin/send-otp', async (req, res) => {
     } else {
        res.json({ success: true, message: 'OTP sent successfully' });
     }
-  } catch (err) {
-    res.json({ success: true, message: 'OTP logged', devOtp: otp });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: 'Failed to send OTP email: ' + err.message });
   }
 });
 
@@ -1841,7 +1852,7 @@ async function boot() {
 app.get('/api/test-vercel', (req, res) => {
   res.json({
     cwd: process.cwd(),
-    dirname: __dirname,
+    
     files: fs.readdirSync(process.cwd()),
     filesInApi: fs.existsSync(path.join(process.cwd(), 'api')) ? fs.readdirSync(path.join(process.cwd(), 'api')) : [],
     configExists: fs.existsSync(path.join(process.cwd(), 'firebase-applet-config.json')),
@@ -1857,4 +1868,4 @@ app.get('/api/test-vercel', (req, res) => {
 }
 
 boot();
-module.exports = app;
+export default app;
