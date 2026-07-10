@@ -185,11 +185,11 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
     if (paymentOption === 'payonline') {
       initializePayment({
         onSuccess: async (reference: any) => {
-          const isVerified = await PaystackService.verifyTransaction(reference.reference);
-          if (isVerified) {
+          const verifyResult = await PaystackService.verifyTransaction(reference.reference);
+          if (verifyResult.success) {
             handleConfirmOrder();
           } else {
-            setErrorMessage('Payment verification failed. Please contact support if you were debited.');
+            setErrorMessage('Payment verification failed: ' + (verifyResult.message || 'Please contact support if you were debited.'));
           }
         },
         onClose: () => {

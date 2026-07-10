@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, XCircle, BarChart3, FileText, Map, Star, Sliders, MapPin, DollarSign, Eye } from 'lucide-react';
+import { Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, AlertCircle, XCircle, BarChart3, FileText, Map, Star, Sliders, MapPin, DollarSign, Eye } from 'lucide-react';
 import { Product, Order } from '../types';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, AreaChart } from 'recharts';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -23,6 +23,29 @@ type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products
 
 export function AdminDashboard({ products, orders, visits = [], auditLogs = [], onUpdateStock, onUpdateOrderStatus, onAddProduct, onGoHome, onLogout }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  const [users, setUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+
+  React.useEffect(() => {
+    if (activeTab === 'customers') {
+      setLoadingUsers(true);
+      const token = sessionStorage.getItem('tizzitech_admin_token') || '';
+      fetch('/api/admin/users', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            setUsers(data.users);
+          }
+          setLoadingUsers(false);
+        })
+        .catch(err => {
+          console.error(err);
+          setLoadingUsers(false);
+        });
+    }
+  }, [activeTab]);
   const [chartMetric, setChartMetric] = useState<'revenue' | 'orders' | 'profit'>('revenue');
   const [salesReportFilterMonth, setSalesReportFilterMonth] = useState<string>('All');
   const [search, setSearch] = useState('');

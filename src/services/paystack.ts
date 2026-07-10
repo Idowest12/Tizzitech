@@ -50,14 +50,14 @@ export class PaystackService {
     return cleanKey;
   }
 
-  static async verifyTransaction(reference: string): Promise<boolean> {
+  static async verifyTransaction(reference: string): Promise<{success: boolean, message?: string}> {
     try {
       const response = await fetch(`/api/payment/verify?reference=${reference}`);
       const data = await response.json();
-      return data.success;
-    } catch (error) {
+      return { success: data.success, message: data.message };
+    } catch (error: any) {
       console.error('Error verifying transaction:', error);
-      return false;
+      return { success: false, message: error.message };
     }
   }
 }
