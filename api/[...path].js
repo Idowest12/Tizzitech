@@ -1,3 +1,3 @@
-const server = require('../dist/server.cjs');
+import server from '../dist/server.cjs';
 const app = server.default || server;
-module.exports = app;
+export default app;

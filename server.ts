@@ -1,6 +1,5 @@
 import fs from 'fs';
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import mysql from 'mysql2/promise';
 import jwt from 'jsonwebtoken';
@@ -1740,6 +1739,7 @@ async function boot() {
   });
 
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -1760,9 +1760,22 @@ async function boot() {
 
   // Only listen if not running on Vercel
   if (!process.env.VERCEL) {
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Server running on port ${PORT}`);
-    });
+    
+app.get('/api/test-vercel', (req, res) => {
+  res.json({
+    cwd: process.cwd(),
+    dirname: __dirname,
+    files: fs.readdirSync(process.cwd()),
+    filesInApi: fs.existsSync(path.join(process.cwd(), 'api')) ? fs.readdirSync(path.join(process.cwd(), 'api')) : [],
+    configExists: fs.existsSync(path.join(process.cwd(), 'firebase-applet-config.json')),
+  });
+});
+
+  if (!process.env.VERCEL && !process.env.VERCEL_ENV) {
+      app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Server running on port ${PORT}`);
+      });
+    }
   }
 }
 
