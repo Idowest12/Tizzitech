@@ -55,15 +55,33 @@ export default function AdminApp() {
         }
       } else {
         // Logged out
+        setIsAuthenticated(false);
       }
     });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []); // Run once on mount
+
+  // Load Firestore listeners only when authenticated
+  useEffect(() => {
+    if (!isAuthenticated) return;
 
     const unsubProducts = onSnapshot(collection(db, 'products'), (snap) => {
       setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }) as any));
     }, (err) => console.warn('Products read permission denied:', err.message));
 
     const unsubOrders = onSnapshot(collection(db, 'orders'), (snap) => {
-      setOrders(snap.docs.map(d => d.data() as any));
+      const ordersList = snap.docs.map(d => d.data() as any);
+      ordersList.sort((a, b) => {
+        const valA = a.orderDate || a.order_date || '';
+        const valB = b.orderDate || b.order_date || '';
+        const tA = valA ? new Date(valA).getTime() : 0;
+        const tB = valB ? new Date(valB).getTime() : 0;
+        return (isNaN(tB) ? 0 : tB) - (isNaN(tA) ? 0 : tA);
+      });
+      setOrders(ordersList);
     }, (err) => console.warn('Orders read permission denied:', err.message));
       
     const unsubAuditLogs = onSnapshot(collection(db, 'audit_logs'), (snap) => {
@@ -72,13 +90,17 @@ export default function AdminApp() {
       setAuditLogs(logs);
     }, (err) => console.warn('Audit logs read permission denied:', err.message));
 
+    const unsubVisits = onSnapshot(collection(db, 'analytics_visits'), (snap) => {
+      setVisits(snap.docs.map(d => d.data() as any));
+    }, (err) => console.warn('Visits read permission denied:', err.message));
+
     return () => {
-      unsubscribe();
       unsubProducts();
       unsubOrders();
       unsubAuditLogs();
+      unsubVisits();
     };
-  }, []); // Run once on mount
+  }, [isAuthenticated]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

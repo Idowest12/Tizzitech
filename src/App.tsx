@@ -191,6 +191,7 @@ export default function App() {
                 }));
                 
                 if (mapped.length > 0) {
+                  mapped.sort((a: any, b: any) => b.orderDate.getTime() - a.orderDate.getTime());
                   setOrders(mapped);
                   return;
                 }

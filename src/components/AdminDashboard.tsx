@@ -19,7 +19,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'newsletter' | 'admins';
+type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'newsletter' | 'admins' | 'audit-logs';
 
 export function AdminDashboard({ products, orders, visits = [], auditLogs = [], onUpdateStock, onUpdateOrderStatus, onAddProduct, onGoHome, onLogout }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
@@ -391,6 +391,7 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
           <NavItem tab="discounts" icon={Tags} label="Coupons" />
           <NavItem tab="newsletter" icon={Mail} label="Newsletter" />
           <NavItem tab="admins" icon={ShieldAlert} label="Administrators" />
+          <NavItem tab="audit-logs" icon={ShieldAlert} label="Audit Logs" />
         </div>
 
         <div className="p-4 border-t border-neutral-900 mt-auto flex-shrink-0 space-y-2">
@@ -1537,29 +1538,47 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Customer</th>
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Location</th>
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Orders</th>
+                      <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Products Bought</th>
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Total Spent</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-900/50">
-                    {/* Mock distinct customers from orders */}
-                    {Array.from(new Set(orders.map(o => o.address))).map((address, idx) => {
-                       const customerOrders = orders.filter(o => o.address === address);
+                    {/* Distinct customers from orders */}
+                    {Array.from(new Set(orders.map(o => o.email || o.address))).map((key, idx) => {
+                       const customerOrders = orders.filter(o => (o.email || o.address) === key);
                        const spent = customerOrders.reduce((sum, o) => sum + o.total, 0);
+                       const firstOrder = customerOrders[0];
+                       const name = firstOrder?.fullname || `Customer ${idx + 1}`;
+                       const email = firstOrder?.email || `customer${idx + 1}@example.com`;
+                       const address = firstOrder?.address || '';
+                       const initials = name.substring(0, 2).toUpperCase();
+                       const allProducts = customerOrders.flatMap(o => (o.items || []).map((i: any) => i.name || 'Product'));
+                       const uniqueProducts = Array.from(new Set(allProducts));
+
                        return (
                          <tr key={idx} className="hover:bg-neutral-900/30 transition-colors">
                            <td className="py-4 px-6">
                               <div className="flex items-center gap-3">
                                  <div className="h-8 w-8 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-xs font-bold">
-                                    C{idx + 1}
+                                    {initials}
                                  </div>
                                  <div>
-                                    <p className="text-sm font-bold text-white">Customer {idx + 1}</p>
-                                    <p className="text-xs text-neutral-500">customer{idx + 1}@example.com</p>
+                                    <p className="text-sm font-bold text-white">{name}</p>
+                                    <p className="text-xs text-neutral-500">{email}</p>
                                  </div>
                               </div>
                            </td>
                            <td className="py-4 px-6 text-sm text-neutral-400 max-w-[200px] truncate">{address}</td>
                            <td className="py-4 px-6 text-sm text-white font-mono">{customerOrders.length}</td>
+                           <td className="py-4 px-6 text-sm text-neutral-400">
+                             <div className="flex flex-wrap gap-1">
+                               {uniqueProducts.map((p, i) => (
+                                 <span key={i} className="inline-block px-2 py-1 bg-neutral-900 rounded text-xs truncate max-w-[150px]">
+                                   {p}
+                                 </span>
+                               ))}
+                             </div>
+                           </td>
                            <td className="py-4 px-6 text-sm text-white font-mono font-bold">₦{spent.toLocaleString()}</td>
                          </tr>
                        );
@@ -1577,6 +1596,7 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
                         </td>
                         <td className="py-4 px-6 text-sm text-neutral-400">Lagos, Nigeria</td>
                         <td className="py-4 px-6 text-sm text-white font-mono">0</td>
+                        <td className="py-4 px-6 text-sm text-neutral-400">No products</td>
                         <td className="py-4 px-6 text-sm text-white font-mono font-bold">₦0</td>
                       </tr>
                     )}

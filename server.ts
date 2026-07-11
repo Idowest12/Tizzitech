@@ -68,7 +68,8 @@ app.set('trust proxy', 1);
 const PORT = 3000;
 
 // Enable JSON middleware for parsing parsed body structures
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 app.use((req, res, next) => {
   next();
@@ -171,6 +172,40 @@ function getFirebaseDb() {
   }
 }
 
+async function logServerAuditActivity(req: express.Request, action: string, details: string, explicitEmail?: string) {
+  const db = getFirebaseDb();
+  if (!db) return;
+  try {
+    const id = Date.now().toString() + Math.random().toString(36).substring(2, 7);
+    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    
+    const email = explicitEmail || (req as any).admin?.email || 'system-fallback';
+
+    await setDoc(doc(db, 'audit_logs', id), {
+      id,
+      timestamp: Date.now(),
+      action,
+      details,
+      email,
+      ip,
+      userAgent
+    });
+    console.log(`[AUDIT LOGGED] Action: ${action} | Details: ${details} | User: ${email}`);
+  } catch (err: any) {
+    console.error('Failed to write audit log in Firestore:', err.message);
+  }
+}
+
+function getBaseUrl(req: express.Request): string {
+  if (process.env.APP_URL) {
+    return process.env.APP_URL;
+  }
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host || req.get('host') || 'localhost:3000';
+  return `${protocol}://${host}`;
+}
+
 // Configure MySQL connection pooling - lazy-initialized to prevent server crashes if environment variables are not yet present
 let pool: mysql.Pool | null = null;
 
@@ -240,6 +275,10 @@ const verifyAdminToken = (req: express.Request, res: express.Response, next: exp
 
   // Always allow mock token for preview environments
   if (token === 'mock-admin-token-for-preview') {
+    (req as any).admin = {
+      email: 'idowutosin70@gmail.com', // use actual admin email for realistic audits
+      id: 'mock-admin-id'
+    };
     return next();
   }
 
@@ -258,6 +297,10 @@ const verifyAdminToken = (req: express.Request, res: express.Response, next: exp
       return res.status(403).json({ error: 'Forbidden: Admin access required.' });
     }
     
+    (req as any).admin = {
+      email: decoded.email,
+      id: decoded.userId || decoded.backendId || 'admin-id'
+    };
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired administrative token.' });
@@ -312,6 +355,31 @@ app.get('/api/payment/verify', apiLimiter, async (req, res) => {
     console.error('Paystack verification error:', err);
     return res.status(500).json({ success: false, message: 'Internal server error during verification' });
   }
+});
+
+// ANALYTICS: VISIT TRACKER
+app.post('/api/analytics/visit', async (req, res) => {
+  const { visitorId, isRegistered } = req.body;
+  const db = getFirebaseDb();
+  const timestamp = new Date().toISOString();
+  
+  if (db) {
+    try {
+      const visitId = `v_${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+      await setDoc(doc(db, 'analytics_visits', visitId), {
+        id: visitId,
+        visitorId: visitorId || 'anonymous',
+        isRegistered: !!isRegistered,
+        timestamp,
+        userAgent: req.headers['user-agent'] || 'unknown',
+        ip: req.ip || 'unknown'
+      });
+      return res.json({ success: true, visitId });
+    } catch (err: any) {
+      console.error('Failed to log analytics visit to Firestore:', err.message);
+    }
+  }
+  return res.json({ success: true });
 });
 
 // 1. GET ALL PRODUCTS
@@ -442,14 +510,14 @@ app.post('/api/orders', apiLimiter, async (req, res) => {
   const db = getFirebaseDb();
   if (db) {
     try {
+      let serverItemsTotal = 0;
+      const validItems: any[] = [];
+
       await runTransaction(db, async (transaction) => {
         // --- READ PHASE ---
         const prodRefs = items.map((item: any) => doc(db, 'products', item.id));
         const prodDocs = await Promise.all(prodRefs.map((ref: any) => transaction.get(ref)));
         
-        let serverItemsTotal = 0;
-        const validItems = [];
-
         for (let i = 0; i < prodDocs.length; i++) {
           const prodDoc = prodDocs[i];
           const requestedItem = items[i];
@@ -466,8 +534,10 @@ app.post('/api/orders', apiLimiter, async (req, res) => {
           const genuinePrice = pData.price || 0;
           serverItemsTotal += genuinePrice * requestedItem.quantity;
           validItems.push({
-             ...requestedItem,
-             price: genuinePrice, // enforce pristine database price
+             id: requestedItem.id,
+             name: pData.name || requestedItem.name || 'Product',
+             price: genuinePrice,
+             quantity: requestedItem.quantity,
              newStock: (pData.stock || 0) - requestedItem.quantity
           });
         }
@@ -485,14 +555,19 @@ app.post('/api/orders', apiLimiter, async (req, res) => {
         transaction.set(orderRef, {
           id: orderId,
           user_id: userId || null,
+          userId: userId || null,
           fullname,
           email,
           address,
           payment_option: paymentOption,
+          paymentOption,
           total: total, // we persist the valid total with delivery fee included
           status: 'Confirmed',
           order_date: orderDate.toISOString(),
-          expected_delivery_date: expectedDeliveryDate.toISOString()
+          orderDate: orderDate.toISOString(),
+          expected_delivery_date: expectedDeliveryDate.toISOString(),
+          expectedDeliveryDate: expectedDeliveryDate.toISOString(),
+          items: validItems.map(item => ({ id: item.id, price: item.price, quantity: item.quantity, name: item.name }))
         });
 
         for (let i = 0; i < validItems.length; i++) {
@@ -508,22 +583,132 @@ app.post('/api/orders', apiLimiter, async (req, res) => {
            });
 
            transaction.update(prodRefs[i], { stock: vItem.newStock });
+
+           // Low stock check: if product drops to 5 items or fewer, trigger email alert
+           if (vItem.newStock <= 5) {
+             const lowStockSubject = `⚠️ LOW STOCK DETECTED: ${vItem.name}`;
+             const lowStockHtml = `
+               <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background-color: #09090b; color: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 12px; padding: 24px;">
+                 <h2 style="color: #ef4444; margin-top: 0;">⚠️ Low Stock Automation Alert</h2>
+                 <p>Dear Admin,</p>
+                 <p>An automated inventory threshold event has occurred. The stock level for the following item has dropped to <strong>5 or fewer items</strong>:</p>
+                 <div style="background-color: #18181b; border: 1px solid #27272a; border-radius: 8px; padding: 16px; margin: 16px 0;">
+                   <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
+                     <tr>
+                       <td style="color: #71717a; padding: 4px 0;">Product ID</td>
+                       <td style="color: #ffffff; font-family: monospace; font-weight: 500;">${vItem.id}</td>
+                     </tr>
+                     <tr>
+                       <td style="color: #71717a; padding: 4px 0;">Product Name</td>
+                       <td style="color: #ffffff; font-weight: bold;">${vItem.name}</td>
+                     </tr>
+                     <tr>
+                       <td style="color: #71717a; padding: 4px 0;">Updated Stock Level</td>
+                       <td style="color: #ef4444; font-weight: 800;">${vItem.newStock} remaining</td>
+                     </tr>
+                   </table>
+                 </div>
+                 <p style="font-size: 13px; color: #a1a1aa;">Please log in to your dashboard and restock the product or contact your suppliers immediately to prevent complete stock depletion.</p>
+                 <div style="text-align: center; margin-top: 24px;">
+                   <a href="${getBaseUrl(req)}/admin" style="display: inline-block; background-color: #ef4444; color: #ffffff; font-size: 13px; font-weight: 700; text-decoration: none; padding: 10px 24px; border-radius: 6px;">Manage Inventory</a>
+                 </div>
+               </div>
+             `;
+             sendEmail('idowutosin70@gmail.com', lowStockSubject, lowStockHtml)
+               .catch(err => console.error("Low stock email dispatch failed:", err));
+           }
         }
       });
 
-      // Send order confirmation email
+      // Send responsive high-fidelity order confirmation invoice email
       const orderSubject = `Order Confirmation - ${orderId}`;
       const orderHtml = `
-        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #fff; padding: 20px;">
-          <h2 style="color: #007bff;">Thank You for Your Order!</h2>
-          <p>Hi ${fullname},</p>
-          <p>We've successfully received your order <strong>${orderId}</strong>.</p>
-          <p>Total: <strong>$${total.toFixed(2)}</strong></p>
-          <p>Your items are being prepared and your expected delivery date is ${expectedDeliveryDate.toDateString()}.</p>
-          <p>We will notify you when your order ships.</p>
-          <br>
-          <p>Best regards,</p>
-          <p>The Tizzitech Team</p>
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #f5f5f7; border: 1px solid #1a1a1a; border-radius: 16px; padding: 32px; box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);">
+          <!-- Logo / Header -->
+          <div style="text-align: center; margin-bottom: 32px; border-bottom: 1px solid #1c1c1e; padding-bottom: 24px;">
+            <h1 style="font-size: 28px; font-weight: 800; letter-spacing: -0.03em; color: #ffffff; margin: 0; text-transform: uppercase;">TIZZITECH</h1>
+            <p style="font-size: 11px; font-weight: 700; letter-spacing: 0.15em; color: #52525b; margin: 6px 0 0 0; text-transform: uppercase;">Premium Tech Store</p>
+          </div>
+
+          <!-- Main Greeting -->
+          <h2 style="font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: #ffffff; margin: 0 0 12px 0;">Order Confirmed</h2>
+          <p style="font-size: 14px; color: #a1a1aa; line-height: 1.6; margin: 0 0 24px 0;">Hi ${fullname}, thank you for shopping with us! We have received your order and our fulfillment team is busy packing it. Your tracking ID is <strong>${orderId}</strong>.</p>
+
+          <!-- Order Status Summary -->
+          <div style="background-color: #09090b; border: 1px solid #27272a; border-radius: 12px; padding: 20px; margin-bottom: 32px;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              <tr>
+                <td style="color: #71717a; padding: 4px 0;">Order Date</td>
+                <td style="color: #ffffff; text-align: right; font-weight: 500;">${orderDate.toLocaleDateString()}</td>
+              </tr>
+              <tr>
+                <td style="color: #71717a; padding: 4px 0;">Estimated Delivery</td>
+                <td style="color: #ffffff; text-align: right; font-weight: 500;">${expectedDeliveryDate.toLocaleDateString()}</td>
+              </tr>
+              <tr>
+                <td style="color: #71717a; padding: 4px 0;">Fulfillment Status</td>
+                <td style="color: #3b82f6; text-align: right; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Confirmed</td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- Items Breakdown -->
+          <h3 style="font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #71717a; margin: 0 0 16px 0; border-bottom: 1px solid #1c1c1e; padding-bottom: 8px;">Order Details</h3>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 32px;">
+            <thead>
+              <tr style="border-bottom: 1px solid #1c1c1e; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #71717a;">
+                <th style="text-align: left; padding: 12px 0;">Item</th>
+                <th style="text-align: center; padding: 12px 0;">Qty</th>
+                <th style="text-align: right; padding: 12px 0;">Price</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${validItems.map(item => `
+                <tr style="border-bottom: 1px solid #09090b; font-size: 14px;">
+                  <td style="padding: 16px 0; color: #ffffff; font-weight: 600;">
+                    ${item.name}
+                  </td>
+                  <td style="padding: 16px 0; text-align: center; color: #a1a1aa; font-weight: 500;">${item.quantity}</td>
+                  <td style="padding: 16px 0; text-align: right; color: #ffffff; font-weight: 600; font-family: monospace;">₦${item.price.toLocaleString()}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          <!-- Financial Summary -->
+          <div style="border-top: 1px solid #1c1c1e; padding-top: 16px; margin-bottom: 32px;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+              <tr>
+                <td style="color: #71717a; padding: 6px 0;">Subtotal</td>
+                <td style="color: #ffffff; text-align: right; font-weight: 500; font-family: monospace;">₦${serverItemsTotal.toLocaleString()}</td>
+              </tr>
+              <tr>
+                <td style="color: #71717a; padding: 6px 0;">Delivery Fee</td>
+                <td style="color: #ffffff; text-align: right; font-weight: 500; font-family: monospace;">₦${Math.max(0, total - serverItemsTotal).toLocaleString()}</td>
+              </tr>
+              <tr style="border-top: 1px solid #27272a;">
+                <td style="color: #ffffff; font-weight: 700; padding: 16px 0 6px 0; font-size: 16px;">Total Charged</td>
+                <td style="color: #3b82f6; text-align: right; font-weight: 800; padding: 16px 0 6px 0; font-size: 18px; font-family: monospace;">₦${total.toLocaleString()}</td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- Delivery Details -->
+          <div style="background-color: #09090b; border: 1px solid #1c1c1e; border-radius: 12px; padding: 20px; margin-bottom: 36px;">
+            <h4 style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #71717a; margin: 0 0 10px 0;">Delivery Address</h4>
+            <p style="font-size: 14px; color: #ffffff; line-height: 1.5; margin: 0;">${address}</p>
+          </div>
+
+          <!-- Action Button -->
+          <div style="text-align: center; margin-bottom: 32px;">
+            <a href="${getBaseUrl(req)}/?view=tracking&orderId=${orderId}" style="display: inline-block; background-color: #3b82f6; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none; padding: 14px 32px; border-radius: 8px; letter-spacing: -0.01em; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); transition: all 0.2s ease;">Track Order Real-Time</a>
+          </div>
+
+          <!-- Footer -->
+          <div style="text-align: center; border-top: 1px solid #1c1c1e; padding-top: 24px;">
+            <p style="font-size: 12px; color: #52525b; margin: 0 0 4px 0;">Need help with this order? Contact our support portal.</p>
+            <p style="font-size: 11px; color: #3f3f46; margin: 0;">&copy; ${new Date().getFullYear()} Tizzitech Storefront. All rights reserved.</p>
+          </div>
         </div>
       `;
       await sendEmail(email, orderSubject, orderHtml).catch(err => console.error("Async email failed:", err));
@@ -629,14 +814,20 @@ app.post('/api/products/:productId/reviews', async (req, res) => {
 });
 
 // 4. ADMIN: UPDATE PRODUCT STOCK
-app.patch('/api/products/:productId/stock', async (req, res) => {
+app.patch('/api/products/:productId/stock', verifyAdminToken, async (req, res) => {
   const { productId } = req.params;
   const { stock } = req.body;
 
+  let oldStock = 'unknown';
   const db = getFirebaseDb();
   if (db) {
     try {
+      const snap = await getDoc(doc(db, 'products', productId));
+      if (snap.exists()) {
+        oldStock = snap.data().stock !== undefined ? String(snap.data().stock) : 'unknown';
+      }
       await updateDoc(doc(db, 'products', productId), { stock });
+      await logServerAuditActivity(req, 'STOCK_UPDATE', `Updated stock for product ${productId} from ${oldStock} to ${stock}`);
       return res.json({ success: true, stock });
     } catch (err: any) {
       console.log('Firestore fallback for updating product stock:', err.message);
@@ -646,9 +837,11 @@ app.patch('/api/products/:productId/stock', async (req, res) => {
   // local update fallback
   const prod = fallbackProducts.find(p => p.id === productId);
   if (prod) {
+    oldStock = prod.stock !== undefined ? String(prod.stock) : 'unknown';
     prod.stock = stock;
   }
 
+  await logServerAuditActivity(req, 'STOCK_UPDATE', `Updated stock for product ${productId} from ${oldStock} to ${stock} (Fallback)`);
   return res.json({ success: true, productId, stock });
 });
 
@@ -661,7 +854,15 @@ app.get('/api/admin/orders', verifyAdminToken, async (req, res) => {
     try {
       const ordersSnap = await getDocs(collection(db, 'orders'));
       let ordersRows = ordersSnap.docs.map((d: any) => d.data());
-      ordersRows.sort((a, b) => { const db = a.order_date ? new Date(a.order_date).getTime() : 0; const da = b.order_date ? new Date(b.order_date).getTime() : 0; return (isNaN(da) ? 0 : da) - (isNaN(db) ? 0 : db); });
+      ordersRows.sort((a, b) => {
+        const valA = a.orderDate || a.order_date;
+        const valB = b.orderDate || b.order_date;
+        const tA = valA ? new Date(valA).getTime() : 0;
+        const tB = valB ? new Date(valB).getTime() : 0;
+        const cleanA = isNaN(tA) ? 0 : tA;
+        const cleanB = isNaN(tB) ? 0 : tB;
+        return cleanB - cleanA;
+      });
 
       const ordersData = [];
       for (const order of ordersRows) {
@@ -689,8 +890,8 @@ app.get('/api/admin/orders', verifyAdminToken, async (req, res) => {
           paymentOption: order.payment_option,
           total: order.total,
           status: order.status,
-          orderDate: order.order_date,
-          expectedDeliveryDate: order.expected_delivery_date,
+          orderDate: order.orderDate || order.order_date,
+          expectedDeliveryDate: order.expectedDeliveryDate || order.expected_delivery_date,
           items: itemsRows
         });
       }
@@ -724,8 +925,8 @@ app.patch('/api/admin/orders/:orderId/status', verifyAdminToken, async (req, res
       await updateDoc(doc(db, 'orders', orderId), { status });
       
       if (orderEmail) {
-        const statusSubject = `Order Status Update - ${orderId}`;
-        const statusHtml = `
+        let statusSubject = `Order Status Update - ${orderId}`;
+        let statusHtml = `
           <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #fff; padding: 20px;">
             <h2 style="color: #007bff;">Order Update</h2>
             <p>Hi ${orderName},</p>
@@ -736,9 +937,56 @@ app.patch('/api/admin/orders/:orderId/status', verifyAdminToken, async (req, res
             <p>The Tizzitech Team</p>
           </div>
         `;
+
+        if (status === 'In Transit') {
+          statusSubject = `🚚 Your Order is on the Way! - ${orderId}`;
+          statusHtml = `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #f5f5f7; border: 1px solid #1a1a1a; border-radius: 16px; padding: 32px; box-shadow: 0 4px 30px rgba(0,0,0,0.5);">
+              <div style="text-align: center; margin-bottom: 32px; border-bottom: 1px solid #1c1c1e; padding-bottom: 24px;">
+                <h1 style="font-size: 28px; font-weight: 800; letter-spacing: -0.03em; color: #ffffff; margin: 0; text-transform: uppercase;">TIZZITECH</h1>
+                <p style="font-size: 11px; font-weight: 700; letter-spacing: 0.15em; color: #52525b; margin: 6px 0 0 0; text-transform: uppercase;">Premium Tech Store</p>
+              </div>
+
+              <div style="text-align: center; margin-bottom: 32px;">
+                <div style="display: inline-block; background-color: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 50%; padding: 16px; margin-bottom: 16px;">
+                  <span style="font-size: 32px;">🚚</span>
+                </div>
+                <h2 style="font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: #ffffff; margin: 0 0 8px 0;">Your Order is on the Way!</h2>
+                <p style="font-size: 14px; color: #a1a1aa; margin: 0;">Order <strong>${orderId}</strong> is currently in transit.</p>
+              </div>
+
+              <p style="font-size: 14px; color: #a1a1aa; line-height: 1.6; margin: 0 0 24px 0;">Hi ${orderName}, great news! Our courier team has picked up your parcel and is on their way to deliver it to your address. You can monitor the real-time progress of your courier using our tracking system.</p>
+
+              <div style="text-align: center; margin-bottom: 32px;">
+                <a href="${getBaseUrl(req)}/?view=tracking&orderId=${orderId}" style="display: inline-block; background-color: #10b981; color: #ffffff; font-size: 14px; font-weight: 700; text-decoration: none; padding: 14px 32px; border-radius: 8px; letter-spacing: -0.01em; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);">Track Your Delivery Live</a>
+              </div>
+
+              <div style="background-color: #09090b; border: 1px solid #1c1c1e; border-radius: 12px; padding: 20px; margin-bottom: 32px;">
+                <h3 style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #71717a; margin: 0 0 8px 0;">Fulfillment Update</h3>
+                <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                  <tr>
+                    <td style="color: #71717a; padding: 4px 0;">Fulfillment Status</td>
+                    <td style="color: #10b981; text-align: right; font-weight: bold; text-transform: uppercase;">In Transit</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #71717a; padding: 4px 0;">Destination</td>
+                    <td style="color: #ffffff; text-align: right; font-weight: 500;">${orderSnap.exists() ? (orderSnap.data().address || 'Your Registered Address') : 'Your Registered Address'}</td>
+                  </tr>
+                </table>
+              </div>
+
+              <div style="text-align: center; border-top: 1px solid #1c1c1e; padding-top: 24px;">
+                <p style="font-size: 12px; color: #52525b; margin: 0 0 4px 0;">Have questions about delivery? Reply to this email or chat with us online.</p>
+                <p style="font-size: 11px; color: #3f3f46; margin: 0;">&copy; ${new Date().getFullYear()} Tizzitech Storefront. All rights reserved.</p>
+              </div>
+            </div>
+          `;
+        }
+
         await sendEmail(orderEmail, statusSubject, statusHtml).catch(err => console.error("Async email failed:", err));
       }
       
+      await logServerAuditActivity(req, 'ORDER_UPDATE', `Updated status of order ${orderId} to "${status}"`);
       return res.json({ success: true, orderId, status });
     } catch (err: any) {
       console.log('Firestore fallback for updating order status:', err.message);
@@ -767,6 +1015,7 @@ app.patch('/api/admin/orders/:orderId/status', verifyAdminToken, async (req, res
       await sendEmail(orderEmail, statusSubject, statusHtml).catch(err => console.error("Async email failed:", err));
     }
   }
+  await logServerAuditActivity(req, 'ORDER_UPDATE', `Updated status of order ${orderId} to "${status}" (Fallback)`);
   return res.json({ success: true, orderId, status });
 });
 
@@ -796,6 +1045,7 @@ app.post('/api/products', verifyAdminToken, async (req, res) => {
     try {
       const { id, name, brand, category, price, condition, specs, description, stock, imageUrl } = newProduct;
       await setDoc(doc(db, 'products', id), newProduct);
+      await logServerAuditActivity(req, 'PRODUCT_CREATE', `Created product "${name}" (ID: ${id}) with initial stock ${stock}`);
       return res.json({ success: true, product: newProduct });
     } catch (err: any) {
       console.log('Firestore fallback for adding product:', err.message);
@@ -804,6 +1054,7 @@ app.post('/api/products', verifyAdminToken, async (req, res) => {
 
   // local fallback
   fallbackProducts.push({ ...newProduct, reviews: [] });
+  await logServerAuditActivity(req, 'PRODUCT_CREATE', `Created product "${newProduct.name}" (ID: ${newProduct.id}) with initial stock ${newProduct.stock} (Fallback)`);
   return res.json({ success: true, product: newProduct });
 });
 
@@ -814,6 +1065,10 @@ app.post('/api/admin/upload-image', verifyAdminToken, express.json({limit: '10mb
     let dataURI = '';
     
     // Check if it's sent as a JSON body (base64)
+    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+      return res.status(500).json({ error: 'Cloudinary credentials are not configured on the server.' });
+    }
+
     if (req.body && req.body.image) {
       dataURI = req.body.image;
     } 
@@ -830,10 +1085,11 @@ app.post('/api/admin/upload-image', verifyAdminToken, express.json({limit: '10mb
       folder: 'tizzitech_products',
     });
     
+    await logServerAuditActivity(req, 'IMAGE_UPLOAD', `Uploaded image: ${result.secure_url}`);
     return res.json({ success: true, url: result.secure_url });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Cloudinary upload error:', error);
-    return res.status(500).json({ error: 'Failed to upload image to Cloudinary.' });
+    return res.status(500).json({ error: 'Failed to upload image: ' + (error.message || JSON.stringify(error)) });
   }
 });
 
@@ -844,6 +1100,7 @@ app.post("/api/admin/force-seed", async (req, res) => {
   try {
     const productsToSeed = fallbackProducts.map(({ id, name, brand, category, price, condition, specs, description, stock, imageUrl }) => ({ id, name, brand, category, price, condition, specs, description: description || "", stock, imageUrl }));
     await Promise.all(productsToSeed.map((p: any) => setDoc(doc(db, "products", p.id), p)));
+    await logServerAuditActivity(req, 'DATABASE_SEED', `Force seeded ${productsToSeed.length} products to Firestore`, 'idowutosin70@gmail.com');
     return res.json({ success: true, message: "Seeded" });
   } catch (err: any) {
     return res.status(500).json({ success: false, message: err.message });
@@ -862,6 +1119,7 @@ app.post('/api/admin/seed', verifyAdminToken, async (req, res) => {
     }));
 
     await Promise.all(productsToSeed.map((p: any) => setDoc(doc(db, 'products', p.id), p)));
+    await logServerAuditActivity(req, 'DATABASE_SEED', `Seeded ${productsToSeed.length} products to Firestore`);
     
     return res.json({ success: true, message: 'Initial fallback products seeded to Firestore successfully.' });
   } catch (err: any) {
@@ -1024,7 +1282,7 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
       <p>This link is valid for 5 minutes.</p>
       <p>Otherwise, click the link below to reset your password:</p>
       <br>
-      <a href="${process.env.APP_URL || 'http://localhost:3000'}?view=reset-password&token=${resetToken}" style="display: inline-block; padding: 10px 20px; background-color: #007bff; color: #fff; text-decoration: none; border-radius: 5px;">Reset Password</a>
+      <a href="${getBaseUrl(req)}/?view=reset-password&token=${resetToken}" style="display: inline-block; padding: 10px 20px; background-color: #007bff; color: #fff; text-decoration: none; border-radius: 5px;">Reset Password</a>
       <br><br>
       <p>Best regards,</p>
       <p>The Tizzitech Team</p>
@@ -1373,7 +1631,13 @@ app.get('/api/users/:userId/orders', async (req, res) => {
           });
         } catch(e) {}
       }
-      ordersRows.sort((a, b) => { const db = a.orderDate ? new Date(a.orderDate).getTime() : 0; const da = b.orderDate ? new Date(b.orderDate).getTime() : 0; return (isNaN(da) ? 0 : da) - (isNaN(db) ? 0 : db); });
+      ordersRows.sort((a, b) => {
+        const valA = a.orderDate || a.order_date;
+        const valB = b.orderDate || b.order_date;
+        const db = valA ? new Date(valA).getTime() : 0;
+        const da = valB ? new Date(valB).getTime() : 0;
+        return (isNaN(da) ? 0 : da) - (isNaN(db) ? 0 : db);
+      });
 
       const ordersData = [];
       for (const order of (ordersRows || [])) {
@@ -1653,6 +1917,7 @@ app.post('/api/admin/newsletter/send', verifyAdminToken, async (req, res) => {
       console.warn("Could not log campaign to Firestore, continuing anyway:", campaignErr.message);
     }
 
+    await logServerAuditActivity(req, 'NEWSLETTER_SEND', `Sent newsletter campaign "${subject}" to ${emails.length} subscribers`);
     return res.json({ success: true, message: `Newsletter successfully sent to ${emails.length} subscribers!` });
   } catch (err: any) {
     console.error('Error sending newsletter:', err);
@@ -1766,6 +2031,7 @@ app.post('/api/admin/verify-otp', async (req, res) => {
       const userAgent = req.headers['user-agent'] || 'unknown';
       const sessionDocId = getDocId(email + "_session");
       await setDoc(doc(fbDb, 'admin_sessions', sessionDocId), { ip, userAgent });
+      await logServerAuditActivity(req, 'LOGIN_SUCCESS', `Administrator logged in successfully`, email);
       return res.json({ success: true });
     } else {
       return res.status(400).json({ success: false, message: 'Invalid OTP' });
@@ -1815,6 +2081,7 @@ app.post('/api/admin/logout', async (req, res) => {
     if (fbDb) {
       try {
         await deleteDoc(doc(fbDb, 'admin_sessions', sessionDocId));
+        await logServerAuditActivity(req, 'LOGOUT', `Administrator logged out successfully`, email);
       } catch(e) {}
     }
   }

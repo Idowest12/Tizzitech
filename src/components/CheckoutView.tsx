@@ -91,69 +91,35 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
     const address = `${streetAddress}, ${city}, ${lga}, ${stateLocation}` || 'Lagos Deliveries, Lagos, Nigeria';
     
     try {
-      const { runTransaction, doc, collection, addDoc } = await import('firebase/firestore');
-      const { db, handleFirestoreError, OperationType } = await import('../firebase');
-      
-      const orderId = `TZ${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
-      const newOrderData = {
-        id: orderId,
-        fullname,
-        email: emailAddress,
-        address,
-        paymentOption,
-        total,
-        status: 'Pending',
-        orderDate: new Date().toISOString(),
-        items: cart.map(item => ({ id: item.id, price: item.price, quantity: item.quantity })),
-        userId: user?.uid || null
-      };
+      const response = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullname,
+          email: emailAddress,
+          address,
+          paymentOption,
+          total,
+          items: cart.map(item => ({ id: item.id, price: item.price, quantity: item.quantity, name: item.name })),
+          userId: user?.uid || null
+        })
+      });
 
-      try {
-        await runTransaction(db, async (transaction) => {
-          // Read all products to check stock
-          const productRefs = cart.map(item => doc(db, 'products', item.id));
-          const productDocs = await Promise.all(productRefs.map(ref => transaction.get(ref)));
-          
-          productDocs.forEach((pDoc, index) => {
-            if (!pDoc.exists()) {
-              throw new Error(`Product ${cart[index].name} not found in database.`);
-            }
-            const currentStock = pDoc.data().stock;
-            if (currentStock < cart[index].quantity) {
-              throw new Error(`Not enough stock for ${cart[index].name}.`);
-            }
-          });
-
-          // Deduct stock
-          productDocs.forEach((pDoc, index) => {
-            const newStock = pDoc.data().stock - cart[index].quantity;
-            transaction.update(productRefs[index], { stock: newStock });
-          });
-
-          // Create order
-          const orderRef = doc(db, 'orders', orderId);
-          transaction.set(orderRef, newOrderData);
-        });
-      } catch (err: any) {
-        handleFirestoreError(err, OperationType.CREATE, 'orders/checkout');
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || 'Failed to place order via server.');
       }
 
-      // Mock success data
-      const data: any = { success: true, orderId };
-      if (!data.success) {
-        setErrorMessage(data.message || 'Failed to place order.');
-        setIsSuccess(false);
-        return;
-      }
+      const orderId = data.orderId;
 
       if (saveAddress && updateProfile) { try { await updateProfile({ phone: phoneNumber, address: streetAddress, city, stateLocation, lga }); } catch (e) { console.error("Failed to save address to profile", e); } }
       const newOrder: Order = {
         id: orderId,
         items: [...cart],
         total,
-        status: 'Pending',
-        orderDate: new Date(newOrderData.orderDate || new Date()),
-        expectedDeliveryDate: new Date(new Date().toISOString() || new Date(Date.now() + 3*24*60*60*1000)),
+        status: data.status || 'Pending',
+        orderDate: new Date(),
+        expectedDeliveryDate: data.expectedDeliveryDate ? new Date(data.expectedDeliveryDate) : new Date(Date.now() + 3*24*60*60*1000),
         address
       };
 

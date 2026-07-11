@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { collection, getDocs, addDoc, deleteDoc, doc, query, where, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth, logAuditActivity } from '../firebase';
 import { ShieldAlert, Trash2, Plus, Mail } from 'lucide-react';
 
 interface Admin {
@@ -52,11 +52,13 @@ export function AdminManager() {
       }
       
       const docId = newEmail.trim().toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_');
+      const emailToAdd = newEmail.trim().toLowerCase();
       await setDoc(doc(db, 'admins', docId), {
-        email: newEmail.trim().toLowerCase(),
+        email: emailToAdd,
         addedAt: new Date().toISOString()
       });
       
+      logAuditActivity('ADMIN_ADD', `Added administrator: ${emailToAdd}`, auth.currentUser?.email || 'admin@tizzitech.com');
       setSuccess('Admin added successfully.');
       setNewEmail('');
       fetchAdmins();
@@ -69,6 +71,7 @@ export function AdminManager() {
     if (!window.confirm('Are you sure you want to remove this admin?')) return;
     try {
       await deleteDoc(doc(db, 'admins', id));
+      logAuditActivity('ADMIN_REMOVE', `Removed administrator: ${id}`, auth.currentUser?.email || 'admin@tizzitech.com');
       setAdmins(admins.filter(a => a.id !== id));
       setSuccess('Admin removed.');
     } catch (err: any) {
