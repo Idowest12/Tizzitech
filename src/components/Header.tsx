@@ -32,6 +32,7 @@ interface HeaderProps {
   onGoHome: () => void;
   onSearchStart?: () => void;
   onOpenTechOfTheDay: () => void;
+  currentView?: string;
 }
 
 export function Header({
@@ -48,6 +49,7 @@ export function Header({
   setSearchQuery,
   onGoHome,
   onSearchStart,
+  currentView,
 }: HeaderProps) {
   const { user, role, logOut } = useAuth();
   const [openDropdown, setOpenDropdown] = useState<
@@ -255,25 +257,27 @@ export function Header({
         </nav>
 
         <div className="flex items-center justify-end gap-3 md:gap-4 lg:gap-6 min-w-0">
-          <div className="hidden md:block w-32 lg:w-64 shrink">
-            <div className="relative">
-              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                <Search className="h-4 w-4 text-neutral-500" />
+          {currentView !== "profile" && (
+            <div className="hidden md:block w-32 lg:w-64 shrink">
+              <div className="relative">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                  <Search className="h-4 w-4 text-neutral-500" />
+                </div>
+                <input
+                  type="text"
+                  className="block w-full border-b border-neutral-800 bg-transparent py-1.5 pl-9 pr-3 text-white placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none sm:text-sm transition-colors"
+                  placeholder="Search..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    if (onSearchStart && e.target.value.length > 0) {
+                      onSearchStart();
+                    }
+                  }}
+                />
               </div>
-              <input
-                type="text"
-                className="block w-full border-b border-neutral-800 bg-transparent py-1.5 pl-9 pr-3 text-white placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none sm:text-sm transition-colors"
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  if (onSearchStart && e.target.value.length > 0) {
-                    onSearchStart();
-                  }
-                }}
-              />
             </div>
-          </div>
+          )}
 
           {user && (
             <button
@@ -320,53 +324,29 @@ export function Header({
       {/* Mobile Nav & Search */}
       <div className="md:hidden flex flex-col px-4 pb-4 border-b border-neutral-900 bg-black sticky top-0 z-40">
         <div className="flex items-center gap-3 pt-3">
-          <div className="relative flex-1">
-            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-              <Search className="h-4 w-4 text-neutral-500" />
+          {currentView === "profile" ? (
+            <div className="flex-1 text-xs uppercase font-bold tracking-widest text-neutral-400 font-mono py-2">
+              Profile Dashboard
             </div>
-            <input
-              type="text"
-              className="block w-full border border-neutral-800 rounded bg-neutral-900 py-2 pl-9 pr-3 text-white placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none sm:text-sm transition-colors"
-              placeholder="Search..."
-              value={searchQuery}
-              onChange={(e) => {
+          ) : (
+            <div className="relative flex-1">
+              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                <Search className="h-4 w-4 text-neutral-500" />
+              </div>
+              <input
+                type="text"
+                className="block w-full border border-neutral-800 rounded bg-neutral-900 py-2 pl-9 pr-3 text-white placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none sm:text-sm transition-colors"
+                placeholder="Search..."
+                value={searchQuery}
+                onChange={(e) => {
                   setSearchQuery(e.target.value);
                   if (onSearchStart && e.target.value.length > 0) {
                     onSearchStart();
                   }
                 }}
-            />
-          </div>
-
-          {user ? (
-            <button
-              onClick={handleProfileClick}
-              className="bg-neutral-900 border border-neutral-800 p-2 rounded text-emerald-400 hover:text-white transition-colors flex flex-col items-center justify-center shrink-0"
-              title="Profile"
-            >
-              <User className="h-5 w-5" />
-            </button>
-          ) : (
-            <button
-              onClick={handleAuthClick}
-              className="bg-neutral-900 border border-neutral-800 p-2 rounded text-neutral-400 hover:text-white transition-colors flex flex-col items-center justify-center shrink-0"
-              title="Sign In / Register"
-            >
-              <UserPlus className="h-5 w-5" />
-            </button>
+              />
+            </div>
           )}
-
-          <button
-            onClick={handleCartClick}
-            className="relative bg-neutral-900 border border-neutral-800 p-2 rounded text-neutral-400 hover:text-white transition-colors flex items-center justify-center shrink-0"
-          >
-            <ShoppingCart className="h-5 w-5" />
-            {cartCount > 0 && (
-              <span className="absolute -top-2 -right-2 flex h-4 w-4 items-center justify-center rounded-full bg-blue-600 text-[9px] font-bold text-white">
-                {cartCount}
-              </span>
-            )}
-          </button>
 
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}

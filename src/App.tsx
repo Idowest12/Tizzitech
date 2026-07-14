@@ -515,6 +515,7 @@ export default function App() {
             setSelectedCondition("All");
             setMaxPrice(highestPriceLimit);
           }}
+          currentView={view}
         />
 
       <main className="flex-1 w-full bg-black relative">
