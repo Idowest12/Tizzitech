@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Mail, Lock, User, MapPin, Tag, Phone, Loader2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { GoogleLogin } from '@react-oauth/google';
 
 interface AuthModalProps {
@@ -9,6 +10,7 @@ interface AuthModalProps {
 
 export function AuthModal({ onClose }: AuthModalProps) {
   const { signInWithGoogle, registerWithEmail, loginWithEmail, resetPassword } = useAuth();
+  const { showToast } = useToast();
   const [isLogin, setIsLogin] = useState(true);
   const [isReset, setIsReset] = useState(false);
   const [resetSent, setResetSent] = useState(false);
@@ -35,12 +37,14 @@ export function AuthModal({ onClose }: AuthModalProps) {
       if (isReset) {
         await resetPassword(email);
         setResetSent(true);
+        showToast('Password reset link sent to ' + email, 'info');
         setTimeout(() => {
           setIsReset(false);
           setResetSent(false);
         }, 5000);
       } else if (isLogin) {
         await loginWithEmail(email, password);
+        showToast('Welcome back! Successfully logged in.', 'success');
         onClose();
       } else {
         await registerWithEmail(email, password, {
@@ -50,6 +54,7 @@ export function AuthModal({ onClose }: AuthModalProps) {
           codename,
           phone
         });
+        showToast('Account created successfully! Welcome to Tizzitech.', 'success');
         onClose();
       }
     } catch (err: any) {
@@ -76,6 +81,7 @@ export function AuthModal({ onClose }: AuthModalProps) {
     try {
         setLoading(true);
         await signInWithGoogle();
+        showToast('Welcome! Logged in with Google.', 'success');
         onClose();
     } catch (err: any) {
         console.error("Google sign in error", err);

@@ -21,6 +21,7 @@ import { TechOfTheDay } from "./components/TechOfTheDay";
 import { ProductDetails } from "./components/ProductDetails";
 import { Newsletter } from "./components/Newsletter";
 import { useAuth } from "./contexts/AuthContext";
+import { useToast } from "./contexts/ToastContext";
 import { initialProducts, CATEGORIES as FALLBACK_CATEGORIES, BRANDS as FALLBACK_BRANDS } from "./data";
 import { Category, Condition, CartItem, Product, Order } from "./types";
 
@@ -41,6 +42,19 @@ const itemVariants = {
 
 export default function App() {
   const { user, profile, role } = useAuth();
+  const { showToast } = useToast();
+
+  const [wishlist, setWishlist] = useState<string[]>(() => {
+    const saved = localStorage.getItem('tizzitech_wishlist');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  });
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -55,6 +69,23 @@ export default function App() {
   };
 
   const [products, setProducts] = useState<Product[]>(initialProducts);
+
+  useEffect(() => {
+    localStorage.setItem('tizzitech_wishlist', JSON.stringify(wishlist));
+  }, [wishlist]);
+
+  const handleToggleWishlist = (product: Product) => {
+    setWishlist((prev) => {
+      const exists = prev.includes(product.id);
+      if (exists) {
+        showToast(`"${product.name}" removed from wishlist.`, 'info');
+        return prev.filter((id) => id !== product.id);
+      } else {
+        showToast(`"${product.name}" added to wishlist.`, 'success');
+        return [...prev, product.id];
+      }
+    });
+  };
   const [cart, setCart] = useState<CartItem[]>(() => {
     const saved = localStorage.getItem('tizzitech_cart');
     if (saved) {
@@ -509,6 +540,8 @@ export default function App() {
             products={products}
             setProducts={setProducts}
             onRequireAuth={() => setIsAuthOpen(true)}
+            isWishlisted={wishlist.includes(selectedProduct.id)}
+            onToggleWishlist={handleToggleWishlist}
           />
         ) : view === "checkout" ? (
           <CheckoutView cart={cart} deliveryZones={deliveryZones}
@@ -532,7 +565,13 @@ export default function App() {
           />
         ) : view === "profile" ? (
           <div className="relative z-10 pt-8 pb-16">
-            <UserProfileDashboard orders={orders} />
+            <UserProfileDashboard 
+              orders={orders} 
+              wishlist={wishlist}
+              onToggleWishlist={handleToggleWishlist}
+              onAddToCart={addToCart}
+              products={products}
+            />
           </div>
         ) : (
           <div className="relative z-10 w-full flex flex-col animate-in fade-in duration-500">
@@ -729,6 +768,8 @@ export default function App() {
                               setSelectedProduct(p);
                               setView("product-details");
                             }}
+                            isWishlisted={wishlist.includes(product.id)}
+                            onToggleWishlist={handleToggleWishlist}
                           />
                         </motion.div>
                       ))}

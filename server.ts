@@ -172,6 +172,90 @@ function getFirebaseDb() {
   }
 }
 
+async function getRequestGeo(req: express.Request) {
+  // 1. Try cloud provider / CDN headers first
+  let country = (req.headers['x-client-geo-country'] || req.headers['x-appengine-country'] || req.headers['cf-ipcountry'] || '').toString().trim().toUpperCase();
+  let region = (req.headers['x-client-geo-region'] || req.headers['x-appengine-region'] || '').toString().trim();
+  let city = (req.headers['x-client-geo-city'] || req.headers['x-appengine-city'] || '').toString().trim();
+
+  if (country) {
+    return {
+      country,
+      region: region || 'unknown',
+      city: city || 'unknown'
+    };
+  }
+
+  // 2. Resolve client IP
+  let ip = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').toString().split(',')[0].trim();
+  // Standard clean up for ipv4 mapped to ipv6
+  if (ip.startsWith('::ffff:')) {
+    ip = ip.substring(7);
+  }
+
+  // Check if IP is localhost or private
+  const isLocal = !ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('172.16.') || ip.startsWith('172.31.');
+
+  if (!isLocal) {
+    // Try Provider 1: ip-api.com (Very fast and reliable free endpoint, doesn't rate limit as aggressively by default, returns JSON errors)
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const res = await fetch(`http://ip-api.com/json/${ip}`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      
+      if (res.ok) {
+        const text = await res.text();
+        if (text && (text.startsWith('{') || text.startsWith('['))) {
+          const data = JSON.parse(text);
+          if (data && data.status === 'success') {
+            return {
+              country: data.countryCode ? data.countryCode.toUpperCase() : 'Unknown',
+              region: data.regionName || data.region || 'Unknown',
+              city: data.city || 'Unknown'
+            };
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[GEO IP-API FAILED] ip: ${ip} | Error: ${err.message}`);
+    }
+
+    // Try Provider 2: ipapi.co (with safe JSON parsing protection)
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const res = await fetch(`https://ipapi.co/${ip}/json/`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const text = await res.text();
+        if (text && (text.startsWith('{') || text.startsWith('['))) {
+          const data = JSON.parse(text);
+          if (data && data.country_code) {
+            return {
+              country: data.country_code.toUpperCase(),
+              region: data.region || data.region_code || 'Unknown',
+              city: data.city || 'Unknown'
+            };
+          }
+        } else {
+          console.warn(`[GEO IPAPI.CO SKIPPED] Non-JSON response received`);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[GEO IPAPI.CO FAILED] ip: ${ip} | Error: ${err.message}`);
+    }
+  }
+
+  // fallback
+  return {
+    country: 'NG',
+    region: 'Lagos',
+    city: 'Lagos'
+  };
+}
+
 async function logServerAuditActivity(req: express.Request, action: string, details: string, explicitEmail?: string) {
   const db = getFirebaseDb();
   if (!db) return;
@@ -365,6 +449,7 @@ app.post('/api/analytics/visit', async (req, res) => {
   
   if (db) {
     try {
+      const geo = await getRequestGeo(req);
       const visitId = `v_${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
       await setDoc(doc(db, 'analytics_visits', visitId), {
         id: visitId,
@@ -372,7 +457,10 @@ app.post('/api/analytics/visit', async (req, res) => {
         isRegistered: !!isRegistered,
         timestamp,
         userAgent: req.headers['user-agent'] || 'unknown',
-        ip: req.ip || 'unknown'
+        ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress || req.ip || 'unknown',
+        country: geo.country,
+        region: geo.region,
+        city: geo.city
       });
       return res.json({ success: true, visitId });
     } catch (err: any) {
@@ -1176,9 +1264,14 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       const existSnap = await getDocs(existQ);
       if (!existSnap.empty) return res.status(400).json({ success: false, message: 'Email already registered' });
 
+      const geo = await getRequestGeo(req);
       await setDoc(doc(db, 'users', userId), {
         id: userId, email, password: hashedPassword,
-        firstname: firstName, lastname: surname, address, phone, role: 'user'
+        firstname: firstName, lastname: surname, address, phone, role: 'user',
+        country: geo.country,
+        region: geo.region,
+        city: geo.city,
+        createdAt: new Date().toISOString()
       });
 
       const token = jwt.sign({ userId, email, role: 'user' }, JWT_SECRET, { expiresIn: '7d' });
@@ -1353,10 +1446,15 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
         let userId = user?.id;
         
         if (!user) {
+          const geo = await getRequestGeo(req);
           userId = `U${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
           user = {
             id: userId, email, password: 'oauth_user_no_password',
-            firstname: firstName, lastname: surname, role: 'user'
+            firstname: firstName, lastname: surname, role: 'user',
+            country: geo.country,
+            region: geo.region,
+            city: geo.city,
+            createdAt: new Date().toISOString()
           };
           await setDoc(doc(db, 'users', userId), user);
           
@@ -1473,6 +1571,20 @@ app.post('/api/auth/login', async (req, res) => {
 
       const isValid = await bcrypt.compare(password, user.password);
       if (!isValid) return res.status(401).json({ success: false, message: 'Invalid credentials' });
+
+      if (!user.country || !user.region) {
+        try {
+          const geo = await getRequestGeo(req);
+          await updateDoc(doc(db, 'users', user.id), {
+            country: geo.country,
+            region: geo.region,
+            city: geo.city
+          });
+          user.country = geo.country;
+          user.region = geo.region;
+          user.city = geo.city;
+        } catch (e) {}
+      }
 
       const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
       return res.json({ 

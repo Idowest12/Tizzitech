@@ -3,13 +3,14 @@ import { Bell, Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, Lay
 import { Product, Order } from '../types';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, AreaChart } from 'recharts';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth, logAuditActivity } from '../firebase';
 import { NewsletterAdmin } from './NewsletterAdmin';
 import { AdminManager } from './AdminManager';
 
 interface AdminDashboardProps {
   auditLogs?: any[];
   visits?: any[];
+  allUsers?: any[];
   products: Product[];
   orders: Order[];
   onUpdateStock: (id: string, newStock: number) => void;
@@ -21,7 +22,7 @@ interface AdminDashboardProps {
 
 type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'newsletter' | 'admins' | 'audit-logs';
 
-export function AdminDashboard({ products, orders, visits = [], auditLogs = [], onUpdateStock, onUpdateOrderStatus, onAddProduct, onGoHome, onLogout }: AdminDashboardProps) {
+export function AdminDashboard({ products, orders, visits = [], allUsers = [], auditLogs = [], onUpdateStock, onUpdateOrderStatus, onAddProduct, onGoHome, onLogout }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [previousOrderCount, setPreviousOrderCount] = useState<number | null>(null);
   const [newOrderNotification, setNewOrderNotification] = useState<string | null>(null);
@@ -123,8 +124,73 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
       visits: dailyVisits[date]
     }));
 
-    return { total, registered, guest, uniqueVisitors, regular, chartData };
-  }, [visits]);
+    // Group visits by country & region
+    const visitsByCountry: Record<string, number> = {};
+    const visitsByRegion: Record<string, number> = {};
+
+    visits.forEach(v => {
+      const country = v.country ? v.country.trim().toUpperCase() : 'Unknown';
+      const region = v.region ? v.region.trim() : 'Unknown';
+      
+      const countryName = country === 'Unknown' ? 'Unknown' : (country === 'US' ? 'United States' : (country === 'NG' ? 'Nigeria' : (country === 'GB' ? 'United Kingdom' : country)));
+      visitsByCountry[countryName] = (visitsByCountry[countryName] || 0) + 1;
+
+      if (region && region !== 'Unknown') {
+        const regionKey = `${region} (${countryName})`;
+        visitsByRegion[regionKey] = (visitsByRegion[regionKey] || 0) + 1;
+      }
+    });
+
+    // Group users (signups) by country & region
+    const signupsByCountry: Record<string, number> = {};
+    const signupsByRegion: Record<string, number> = {};
+
+    allUsers.forEach(u => {
+      const country = u.country ? u.country.trim().toUpperCase() : 'Unknown';
+      const region = u.region ? u.region.trim() : 'Unknown';
+
+      const countryName = country === 'Unknown' ? 'Unknown' : (country === 'US' ? 'United States' : (country === 'NG' ? 'Nigeria' : (country === 'GB' ? 'United Kingdom' : country)));
+      signupsByCountry[countryName] = (signupsByCountry[countryName] || 0) + 1;
+
+      if (region && region !== 'Unknown') {
+        const regionKey = `${region} (${countryName})`;
+        signupsByRegion[regionKey] = (signupsByRegion[regionKey] || 0) + 1;
+      }
+    });
+
+    const countriesVisitsList = Object.keys(visitsByCountry).map(c => ({
+      country: c,
+      count: visitsByCountry[c]
+    })).sort((a, b) => b.count - a.count);
+
+    const regionsVisitsList = Object.keys(visitsByRegion).map(r => ({
+      region: r,
+      count: visitsByRegion[r]
+    })).sort((a, b) => b.count - a.count);
+
+    const countriesSignupsList = Object.keys(signupsByCountry).map(c => ({
+      country: c,
+      count: signupsByCountry[c]
+    })).sort((a, b) => b.count - a.count);
+
+    const regionsSignupsList = Object.keys(signupsByRegion).map(r => ({
+      region: r,
+      count: signupsByRegion[r]
+    })).sort((a, b) => b.count - a.count);
+
+    return { 
+      total, 
+      registered, 
+      guest, 
+      uniqueVisitors, 
+      regular, 
+      chartData,
+      countriesVisitsList,
+      regionsVisitsList,
+      countriesSignupsList,
+      regionsSignupsList
+    };
+  }, [visits, allUsers]);
 
   // Brands & Conditions state
   const [brands, setBrands] = useState(['Apple', 'Samsung', 'Sony', 'Dell', 'Asus', 'iPhone', 'MacBook', 'HP', 'Lenovo']);
@@ -182,6 +248,8 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
 ]);
   const [showAddZone, setShowAddZone] = useState(false);
   const [newZone, setNewZone] = useState({ zone: '', state: '', time: '', fee: 0 });
+  const [editingZoneIndex, setEditingZoneIndex] = useState<number | null>(null);
+  const [editingZone, setEditingZone] = useState({ zone: '', state: '', time: '', fee: 0 });
 
   // Email Notification Toast State
   const [emailToast, setEmailToast] = useState<string | null>(null);
@@ -572,6 +640,96 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
                    </ResponsiveContainer>
                  </div>
               </div>
+
+              {/* Low Stock Action Center */}
+              <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 mt-6 shadow-sm animate-in fade-in">
+                <div className="flex justify-between items-center mb-6">
+                  <div>
+                    <h3 className="text-white font-bold flex items-center gap-2">
+                      <AlertCircle className="h-5 w-5 text-amber-500" />
+                      Low Stock Action Center
+                    </h3>
+                    <p className="text-xs text-neutral-400 mt-1">Quick replenishment for products below or equal to threshold (5 units)</p>
+                  </div>
+                  <span className="text-xs bg-amber-500/10 text-amber-400 font-bold px-2.5 py-1 rounded-full border border-amber-500/20">
+                    {products.filter(p => p.stock <= 5).length} Items Running Low
+                  </span>
+                </div>
+
+                {products.filter(p => p.stock <= 5).length === 0 ? (
+                  <div className="text-center py-8 bg-neutral-900/10 rounded-xl border border-dashed border-neutral-900">
+                    <CheckCircle className="h-8 w-8 text-emerald-500 mx-auto mb-2" />
+                    <p className="text-sm text-neutral-400 font-medium">All products are well stocked!</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-neutral-900 text-neutral-400">
+                          <th className="pb-3 font-semibold">Product</th>
+                          <th className="pb-3 font-semibold">Category</th>
+                          <th className="pb-3 font-semibold">Current Stock</th>
+                          <th className="pb-3 font-semibold text-right">Quick Restock</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-900/50">
+                        {products.filter(p => p.stock <= 5).map(product => (
+                          <tr key={product.id} className="hover:bg-neutral-900/20 transition-colors">
+                            <td className="py-3">
+                              <div className="flex items-center gap-3">
+                                <div className="h-8 w-8 bg-neutral-900 rounded overflow-hidden p-0.5 flex items-center justify-center shrink-0">
+                                  {product.imageUrl ? (
+                                    <img src={product.imageUrl} alt={product.name} className="h-full w-full object-contain" />
+                                  ) : (
+                                    <Package className="h-4 w-4 text-neutral-600" />
+                                  )}
+                                </div>
+                                <div>
+                                  <span className="font-bold text-neutral-200 block truncate max-w-[220px]">{product.name}</span>
+                                  <span className="text-[10px] text-neutral-500">ID: {product.id}</span>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3 text-neutral-400">{product.category}</td>
+                            <td className="py-3">
+                              {product.stock === 0 ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 font-bold border border-rose-500/20">
+                                  <XCircle className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+                                  Out of Stock
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-bold border border-amber-500/20">
+                                  <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                                  {product.stock} units
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 text-right">
+                              <div className="inline-flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={product.stock}
+                                  onChange={(e) => onUpdateStock(product.id, parseInt(e.target.value) || 0)}
+                                  className={`w-16 bg-neutral-900 rounded px-2 py-1 text-center font-mono text-white text-xs ${
+                                    product.stock === 0 ? 'border border-rose-500/40' : 'border border-amber-500/40'
+                                  }`}
+                                />
+                                <button
+                                  onClick={() => onUpdateStock(product.id, product.stock + 10)}
+                                  className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold transition-all whitespace-nowrap active:scale-95 text-[10px]"
+                                >
+                                  +10 Units
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -823,14 +981,17 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
                         <td className="py-4 px-6">
                           {product.stock > 5 ? (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs font-bold border border-blue-500/20">
+                              <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse"></span>
                               Active
                             </span>
                           ) : product.stock > 0 ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-bold border border-amber-500/20">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-bold border border-amber-500/20 shadow-[0_0_10px_rgba(245,158,11,0.05)] animate-pulse">
+                              <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
                               Low Stock
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 text-xs font-bold border border-rose-500/20">
+                              <XCircle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
                               Out of Stock
                             </span>
                           )}
@@ -842,8 +1003,29 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
                                min="0"
                                value={product.stock}
                                onChange={(e) => onUpdateStock(product.id, parseInt(e.target.value) || 0)}
-                               className="w-20 bg-neutral-900 border border-neutral-800 rounded-md px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500 font-mono text-center"
+                               className={`w-20 bg-neutral-900 rounded-md px-2 py-1.5 text-sm text-white focus:outline-none font-mono text-center transition-all ${
+                                 product.stock === 0
+                                   ? 'border border-rose-500/40 focus:ring-1 focus:ring-rose-500/50'
+                                   : product.stock <= 5
+                                   ? 'border border-amber-500/40 focus:ring-1 focus:ring-amber-500/50'
+                                   : 'border border-neutral-800 focus:border-blue-500/50'
+                               }`}
                              />
+                             {product.stock <= 5 && (
+                               <div className="flex items-center shrink-0">
+                                 {product.stock === 0 ? (
+                                   <XCircle 
+                                     className="h-4 w-4 text-rose-500" 
+                                     title="Out of Stock! Please restock."
+                                   />
+                                 ) : (
+                                   <AlertCircle 
+                                     className="h-4 w-4 text-amber-400 animate-pulse" 
+                                     title={`Low Stock Warning: Only ${product.stock} left.`}
+                                   />
+                                 )}
+                               </div>
+                             )}
                           </div>
                         </td>
                         <td className="py-4 px-6 text-right">
@@ -1246,6 +1428,7 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
                               const nz = [...deliveryZones, newZone];
                               setDeliveryZones(nz);
                               saveSettings(null, null, nz);
+                              logAuditActivity('DELIVERY_ZONE_ADD', `Added delivery zone: ${newZone.zone} (${newZone.state}) with fee ₦${newZone.fee}`, auth.currentUser?.email || 'admin@tizzitech.com');
                               setShowAddZone(false);
                               setNewZone({zone: '', state: '', time: '', fee: 0});
                             }
@@ -1253,6 +1436,49 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
                           className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-500 mt-4"
                         >
                           Save Zone
+                        </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {editingZoneIndex !== null && (
+                <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+                  <div className="bg-neutral-950 border border-neutral-900 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
+                    <button onClick={() => setEditingZoneIndex(null)} className="absolute top-6 right-6 text-neutral-500 hover:text-white"><XCircle className="h-6 w-6" /></button>
+                    <h2 className="text-xl font-bold text-white mb-6">Edit Delivery Zone</h2>
+                    <div className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Zone Name</label>
+                          <input type="text" value={editingZone.zone} onChange={e => setEditingZone({...editingZone, zone: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">State / Region</label>
+                          <input type="text" value={editingZone.state} onChange={e => setEditingZone({...editingZone, state: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Estimated Time</label>
+                          <input type="text" value={editingZone.time} onChange={e => setEditingZone({...editingZone, time: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Fee (₦)</label>
+                          <input type="number" value={editingZone.fee} onChange={e => setEditingZone({...editingZone, fee: Number(e.target.value)})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white font-mono" />
+                        </div>
+                        <button 
+                          onClick={() => {
+                            if (editingZone.zone && editingZone.state) {
+                              const nz = [...deliveryZones];
+                              const oldZone = nz[editingZoneIndex];
+                              nz[editingZoneIndex] = editingZone;
+                              setDeliveryZones(nz);
+                              saveSettings(null, null, nz);
+                              logAuditActivity('DELIVERY_ZONE_UPDATE', `Updated delivery zone: ${oldZone.zone} (${oldZone.state}) -> Price: ₦${oldZone.fee} to ₦${editingZone.fee}, Time: "${oldZone.time}" to "${editingZone.time}"`, auth.currentUser?.email || 'admin@tizzitech.com');
+                              setEditingZoneIndex(null);
+                            }
+                          }}
+                          className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-500 mt-4"
+                        >
+                          Save Changes
                         </button>
                     </div>
                   </div>
@@ -1279,9 +1505,24 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
                          <td className="py-4 px-6 text-sm text-neutral-400">{z.time}</td>
                          <td className="py-4 px-6 text-sm font-bold text-white font-mono">₦{z.fee.toLocaleString()}</td>
                          <td className="py-4 px-6 text-right flex justify-end gap-2">
-                           <button className="text-blue-400 hover:text-blue-300 text-sm font-bold transition-colors">Edit</button>
                            <button 
-                             onClick={() => setDeliveryZones(deliveryZones.filter((_, i) => i !== idx))} 
+                             onClick={() => {
+                               setEditingZoneIndex(idx);
+                               setEditingZone({ ...z });
+                             }}
+                             className="text-blue-400 hover:text-blue-300 text-sm font-bold transition-colors"
+                           >
+                             Edit
+                           </button>
+                           <button 
+                             onClick={() => {
+                               if (window.confirm(`Are you sure you want to delete delivery zone: ${z.zone}?`)) {
+                                 const nz = deliveryZones.filter((_, i) => i !== idx);
+                                 setDeliveryZones(nz);
+                                 saveSettings(null, null, nz);
+                                 logAuditActivity('DELIVERY_ZONE_DELETE', `Deleted delivery zone: ${z.zone} (${z.state})`, auth.currentUser?.email || 'admin@tizzitech.com');
+                               }
+                             }} 
                              className="text-rose-500/70 hover:text-rose-500 text-sm font-bold transition-colors ml-2"
                            >
                              Delete
@@ -1368,6 +1609,115 @@ export function AdminDashboard({ products, orders, visits = [], auditLogs = [], 
                       </div>
                    </div>
                  </div>
+              </div>
+
+              {/* Geolocation Insights */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Visits by Location */}
+                <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
+                  <div className="flex justify-between items-center mb-6">
+                    <div>
+                      <h3 className="text-neutral-200 text-sm font-bold uppercase tracking-wider">Visits by Location</h3>
+                      <p className="text-xs text-neutral-500 mt-1">Countries and regions where your visitors originate from.</p>
+                    </div>
+                    <div className="px-2.5 py-1 text-[10px] font-bold text-blue-400 bg-blue-500/10 rounded-full">
+                      Live Tracking
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Top Countries */}
+                    <div>
+                      <h4 className="text-xs text-neutral-400 font-bold uppercase tracking-wider mb-3">Top Countries</h4>
+                      {analyticsStats.countriesVisitsList.length === 0 ? (
+                        <p className="text-xs text-neutral-600 italic">No geolocation data recorded yet.</p>
+                      ) : (
+                        <div className="space-y-3 max-h-[220px] overflow-y-auto pr-2 custom-scrollbar">
+                          {analyticsStats.countriesVisitsList.map((item, idx) => (
+                            <div key={idx} className="flex justify-between items-center text-xs">
+                              <span className="text-neutral-300 font-medium">{item.country}</span>
+                              <span className="text-neutral-400 bg-neutral-900 px-2 py-0.5 rounded font-mono font-bold">
+                                {item.count} {item.count === 1 ? 'visit' : 'visits'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Top Regions */}
+                    <div>
+                      <h4 className="text-xs text-neutral-400 font-bold uppercase tracking-wider mb-3">Top Regions</h4>
+                      {analyticsStats.regionsVisitsList.length === 0 ? (
+                        <p className="text-xs text-neutral-600 italic">No region data recorded yet.</p>
+                      ) : (
+                        <div className="space-y-3 max-h-[220px] overflow-y-auto pr-2 custom-scrollbar">
+                          {analyticsStats.regionsVisitsList.map((item, idx) => (
+                            <div key={idx} className="flex justify-between items-center text-xs">
+                              <span className="text-neutral-300 font-medium truncate max-w-[150px]">{item.region}</span>
+                              <span className="text-neutral-400 bg-neutral-900 px-2 py-0.5 rounded font-mono font-bold">
+                                {item.count} {item.count === 1 ? 'visit' : 'visits'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* User Signups by Location */}
+                <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
+                  <div className="flex justify-between items-center mb-6">
+                    <div>
+                      <h3 className="text-neutral-200 text-sm font-bold uppercase tracking-wider">User Signups by Location</h3>
+                      <p className="text-xs text-neutral-500 mt-1">Countries and regions where users registered.</p>
+                    </div>
+                    <div className="px-2.5 py-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 rounded-full">
+                      Signups
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Top Countries */}
+                    <div>
+                      <h4 className="text-xs text-neutral-400 font-bold uppercase tracking-wider mb-3">Top Countries</h4>
+                      {analyticsStats.countriesSignupsList.length === 0 ? (
+                        <p className="text-xs text-neutral-600 italic">No signup geo data recorded yet.</p>
+                      ) : (
+                        <div className="space-y-3 max-h-[220px] overflow-y-auto pr-2 custom-scrollbar">
+                          {analyticsStats.countriesSignupsList.map((item, idx) => (
+                            <div key={idx} className="flex justify-between items-center text-xs">
+                              <span className="text-neutral-300 font-medium">{item.country}</span>
+                              <span className="text-emerald-400 bg-emerald-950/30 px-2 py-0.5 rounded font-mono font-bold border border-emerald-900/40">
+                                {item.count} {item.count === 1 ? 'user' : 'users'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Top Regions */}
+                    <div>
+                      <h4 className="text-xs text-neutral-400 font-bold uppercase tracking-wider mb-3">Top Regions</h4>
+                      {analyticsStats.regionsSignupsList.length === 0 ? (
+                        <p className="text-xs text-neutral-600 italic">No signup region data recorded yet.</p>
+                      ) : (
+                        <div className="space-y-3 max-h-[220px] overflow-y-auto pr-2 custom-scrollbar">
+                          {analyticsStats.regionsSignupsList.map((item, idx) => (
+                            <div key={idx} className="flex justify-between items-center text-xs">
+                              <span className="text-neutral-300 font-medium truncate max-w-[150px]">{item.region}</span>
+                              <span className="text-emerald-400 bg-emerald-950/30 px-2 py-0.5 rounded font-mono font-bold border border-emerald-900/40">
+                                {item.count} {item.count === 1 ? 'user' : 'users'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}

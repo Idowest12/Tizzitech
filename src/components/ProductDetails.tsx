@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, ShoppingCart, Check, Shield, Star, Plus, Minus, MessageSquare, Calendar, User } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, Check, Shield, Star, Plus, Minus, MessageSquare, Calendar, User, Heart } from 'lucide-react';
 import { Product, Review } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -11,9 +11,20 @@ interface ProductDetailsProps {
   products: Product[];
   setProducts: React.Dispatch<React.SetStateAction<Product[]>>;
   onRequireAuth?: () => void;
+  isWishlisted: boolean;
+  onToggleWishlist: (product: Product) => void;
 }
 
-export function ProductDetails({ product, onAddToCart, onGoBack, products, setProducts, onRequireAuth }: ProductDetailsProps) {
+export function ProductDetails({ 
+  product, 
+  onAddToCart, 
+  onGoBack, 
+  products, 
+  setProducts, 
+  onRequireAuth,
+  isWishlisted,
+  onToggleWishlist
+}: ProductDetailsProps) {
   const { profile, user } = useAuth();
   const [activeImage, setActiveImage] = useState<string>('');
   const [purchaseQuantity, setPurchaseQuantity] = useState<number>(1);
@@ -246,10 +257,23 @@ export function ProductDetails({ product, onAddToCart, onGoBack, products, setPr
                 <button
                   onClick={handleAddToCart}
                   disabled={product.stock === 0}
-                  className="w-full py-4 px-8 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs tracking-widest uppercase flex items-center justify-center gap-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 py-4 px-8 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs tracking-widest uppercase flex items-center justify-center gap-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <ShoppingCart className="w-4 h-4" />
                   Add to Cart
+                </button>
+
+                <button
+                  onClick={() => onToggleWishlist(product)}
+                  className={`py-4 px-6 border flex items-center justify-center gap-2 transition-all active:scale-95 text-xs font-bold uppercase tracking-widest ${
+                    isWishlisted 
+                      ? 'border-rose-500/30 bg-rose-500/10 text-rose-400' 
+                      : 'border-neutral-800 bg-neutral-950 text-neutral-400 hover:text-white hover:bg-neutral-900'
+                  }`}
+                  title={isWishlisted ? "Remove from Wishlist" : "Add to Wishlist"}
+                >
+                  <Heart className={`w-4 h-4 ${isWishlisted ? 'fill-rose-500 text-rose-500' : ''}`} />
+                  <span>{isWishlisted ? 'Wishlisted' : 'Wishlist'}</span>
                 </button>
               </div>
 

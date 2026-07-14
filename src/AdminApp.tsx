@@ -21,6 +21,7 @@ export default function AdminApp() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [visits, setVisits] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const isManualLogin = useRef(false);
 
@@ -94,11 +95,16 @@ export default function AdminApp() {
       setVisits(snap.docs.map(d => d.data() as any));
     }, (err) => console.warn('Visits read permission denied:', err.message));
 
+    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+      setUsers(snap.docs.map(d => d.data() as any));
+    }, (err) => console.warn('Users read permission denied:', err.message));
+
     return () => {
       unsubProducts();
       unsubOrders();
       unsubAuditLogs();
       unsubVisits();
+      unsubUsers();
     };
   }, [isAuthenticated]);
 
@@ -369,7 +375,7 @@ if (!isAuthenticated) {
   return (
     <div className="min-h-screen bg-black flex flex-col font-sans text-neutral-300">
       <div className="relative z-10 w-full flex-1">
-        <AdminDashboard visits={visits} auditLogs={auditLogs}
+        <AdminDashboard visits={visits} allUsers={users} auditLogs={auditLogs}
           products={products}
           orders={orders}
           onUpdateStock={handleUpdateStock}

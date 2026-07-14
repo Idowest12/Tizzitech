@@ -1,14 +1,22 @@
 import React from 'react';
-import { ShoppingCart } from 'lucide-react';
+import { ShoppingCart, Heart } from 'lucide-react';
 import { Product } from '../types';
 
 interface ProductCardProps {
   product: Product;
   onAddToCart: (product: Product, e?: React.MouseEvent) => void;
   onViewProduct: (product: Product) => void;
+  isWishlisted: boolean;
+  onToggleWishlist: (product: Product, e: React.MouseEvent) => void;
 }
 
-export const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart, onViewProduct }) => {
+export const ProductCard: React.FC<ProductCardProps> = ({ 
+  product, 
+  onAddToCart, 
+  onViewProduct,
+  isWishlisted,
+  onToggleWishlist
+}) => {
   return (
     <div 
       onClick={() => onViewProduct(product)}
@@ -33,6 +41,22 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onAddToCart, 
                 {product.condition}
             </span>
         </div>
+
+        {/* Wishlist Heart Button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleWishlist(product, e);
+          }}
+          className="absolute top-2 right-2 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white transition-colors z-20 group/heart"
+          title={isWishlisted ? "Remove from Wishlist" : "Add to Wishlist"}
+        >
+          <Heart 
+            className={`w-4 h-4 transition-all duration-300 ${
+              isWishlisted ? 'fill-rose-500 text-rose-500 scale-110' : 'text-neutral-300 group-hover/heart:text-rose-400 group-hover/heart:scale-110'
+            }`} 
+          />
+        </button>
         
         {/* Hover overlay button style */}
         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">

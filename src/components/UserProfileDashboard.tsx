@@ -31,11 +31,15 @@ import {
   Send,
   LogOut,
 X } from "lucide-react";
-import { Order, OrderStatus } from "../types";
+import { Order, OrderStatus, Product } from "../types";
 import { NIGERIAN_STATES, LGAS_BY_STATE } from "../utils/nigeriaLocations";
 
 interface UserProfileDashboardProps {
   orders: Order[];
+  wishlist: string[];
+  onToggleWishlist: (product: Product) => void;
+  onAddToCart: (product: Product, e?: React.MouseEvent) => void;
+  products: Product[];
 }
 
 type Tab =
@@ -47,7 +51,13 @@ type Tab =
   | "support"
   | "";
 
-export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
+export function UserProfileDashboard({ 
+  orders,
+  wishlist,
+  onToggleWishlist,
+  onAddToCart,
+  products
+}: UserProfileDashboardProps) {
   const { user, role, profile, updateProfile, logOut } = useAuth();
 
   // Local active tab
@@ -103,7 +113,7 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
   const [avatarUrl, setAvatarUrl] = useState(() => {
     return (
       localStorage.getItem("tizz_profile_avatar") ||
-      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=250"
+      "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%232563eb'/><circle cx='50' cy='35' r='20' fill='%23ffffff'/><path d='M20 80c0-15 15-25 30-25s30 10 30 25' fill='%23ffffff'/></svg>"
     );
   });
   // Address subfields state
@@ -155,24 +165,24 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
 
   const premadeAvatars = [
     {
-      name: "Entrepreneur (Roan)",
-      url: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=250",
+      name: "Tech Blue Profile",
+      url: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%232563eb'/><circle cx='50' cy='35' r='20' fill='%23ffffff'/><path d='M20 80c0-15 15-25 30-25s30 10 30 25' fill='%23ffffff'/></svg>",
     },
     {
-      name: "Creative Designer",
-      url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250",
+      name: "Slate Dark Profile",
+      url: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%231e293b'/><circle cx='50' cy='35' r='20' fill='%23e2e8f0'/><path d='M20 80c0-15 15-25 30-25s30 10 30 25' fill='%23e2e8f0'/></svg>",
     },
     {
-      name: "Senior Engineer",
-      url: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&q=80&w=250",
+      name: "Emerald Mint Profile",
+      url: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23059669'/><circle cx='50' cy='35' r='20' fill='%23ffffff'/><path d='M20 80c0-15 15-25 30-25s30 10 30 25' fill='%23ffffff'/></svg>",
     },
     {
-      name: "Solutions Architect",
-      url: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=250",
+      name: "Amethyst Purple Profile",
+      url: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%237c3aed'/><circle cx='50' cy='35' r='20' fill='%23ffffff'/><path d='M20 80c0-15 15-25 30-25s30 10 30 25' fill='%23ffffff'/></svg>",
     },
     {
-      name: "Security Director",
-      url: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=250",
+      name: "Sunset Orange Profile",
+      url: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23ea580c'/><circle cx='50' cy='35' r='20' fill='%23ffffff'/><path d='M20 80c0-15 15-25 30-25s30 10 30 25' fill='%23ffffff'/></svg>",
     },
   ];
 
@@ -263,39 +273,8 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
     }
   };
 
-  // Wishlist simulations (pull 3 highly structured mock favorites for high-end aesthetic)
-  const mockWishlist = [
-    {
-      id: "fav-1",
-      name: "MacBook Pro M3 Max - Space Black",
-      category: "Laptops",
-      brand: "Apple",
-      price: 2950000,
-      imageUrl:
-        "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=300&q=80",
-      inStock: true,
-    },
-    {
-      id: "fav-2",
-      name: "iPhone 15 Pro Titanium",
-      category: "Phones",
-      brand: "Apple",
-      price: 1450000,
-      imageUrl:
-        "https://images.unsplash.com/photo-1510557880182-3d4d3cba35a5?auto=format&fit=crop&w=300&q=80",
-      inStock: true,
-    },
-    {
-      id: "fav-3",
-      name: "Keychron Q1 Max Mechanical Keyboard",
-      category: "Keyboards",
-      brand: "Keychron",
-      price: 195000,
-      imageUrl:
-        "https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=300&q=80",
-      inStock: false,
-    },
-  ];
+  // Live Wishlist (pull actual user bookmarks)
+  const activeWishlist = products.filter(p => wishlist.includes(p.id));
 
   // Helper copy tracking number
   const copyTrackingNumber = (num: string, id: string) => {
@@ -1111,57 +1090,72 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {mockWishlist.map((item) => (
-              <div
-                key={item.id}
-                className="bg-black/40 border border-neutral-800 rounded-2xl p-4 flex flex-col justify-between"
-              >
-                <div>
-                  <div className="w-full h-36 rounded-xl bg-neutral-900 overflow-hidden border border-neutral-800 flex items-center justify-center">
-                    {item.imageUrl ? (
-                      <img
-                        src={item.imageUrl}
-                        alt={item.name}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-neutral-700 text-[10px] uppercase tracking-widest font-bold">No Img</span>
-                    )}
-                  </div>
-                  <p className="text-[10px] uppercase text-blue-500 tracking-wider font-bold font-mono mt-3">
-                    {item.category}
-                  </p>
-                  <h4 className="text-sm font-bold text-white mt-1 leading-tight">
-                    {item.name}
-                  </h4>
-                  <p className="text-xs text-neutral-400 mt-0.5">
-                    {item.brand}
-                  </p>
-                </div>
-
-                <div className="mt-5 pt-3 border-t border-neutral-900/60 flex items-center justify-between">
+          {activeWishlist.length === 0 ? (
+            <div className="text-center py-12 bg-neutral-900/20 border border-dashed border-neutral-800 rounded-2xl">
+              <Heart className="h-10 w-10 text-neutral-600 mx-auto mb-3" />
+              <p className="text-sm text-neutral-400 font-medium">Your wishlist is currently empty.</p>
+              <p className="text-xs text-neutral-500 mt-1">Explore our store and click the heart icon on any product to save it here!</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              {activeWishlist.map((item) => (
+                <div
+                  key={item.id}
+                  className="bg-black/40 border border-neutral-800 rounded-2xl p-4 flex flex-col justify-between animate-in fade-in"
+                >
                   <div>
-                    <p className="text-[9px] uppercase tracking-wider text-neutral-500">
-                      Fixed Cost
+                    <div className="w-full h-36 rounded-xl bg-neutral-900 overflow-hidden border border-neutral-800 flex items-center justify-center p-3">
+                      {item.imageUrl ? (
+                        <img
+                          src={item.imageUrl}
+                          alt={item.name}
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      ) : (
+                        <span className="text-neutral-700 text-[10px] uppercase tracking-widest font-bold">No Img</span>
+                      )}
+                    </div>
+                    <p className="text-[10px] uppercase text-blue-500 tracking-wider font-bold font-mono mt-3">
+                      {item.category}
                     </p>
-                    <p className="text-sm font-black text-white font-mono">
-                      ₦{item.price.toLocaleString()}
+                    <h4 className="text-sm font-bold text-white mt-1 leading-tight line-clamp-2">
+                      {item.name}
+                    </h4>
+                    <p className="text-xs text-neutral-400 mt-0.5">
+                      {item.brand}
                     </p>
                   </div>
-                  {item.inStock ? (
-                    <span className="text-[9px] font-bold uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded">
-                      In Stock
-                    </span>
-                  ) : (
-                    <span className="text-[9px] font-bold uppercase tracking-widest text-red-400 bg-red-500/10 px-2 py-1 rounded">
-                      Sold Out
-                    </span>
-                  )}
+
+                  <div className="mt-5 pt-3 border-t border-neutral-900/60 flex items-center justify-between">
+                    <div>
+                      <p className="text-[9px] uppercase tracking-wider text-neutral-500">
+                        Price
+                      </p>
+                      <p className="text-sm font-black text-white font-mono">
+                        ₦{item.price.toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => onToggleWishlist(item)}
+                        className="p-1.5 rounded border border-rose-500/30 text-rose-400 hover:bg-rose-500/10 transition-colors active:scale-95"
+                        title="Remove from Wishlist"
+                      >
+                        <Heart className="h-4 w-4 fill-rose-500 text-rose-500" />
+                      </button>
+                      <button
+                        onClick={() => onAddToCart(item)}
+                        disabled={item.stock === 0}
+                        className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-wider transition-colors active:scale-95"
+                      >
+                        {item.stock === 0 ? 'Sold Out' : 'Buy'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -1425,7 +1419,7 @@ export function UserProfileDashboard({ orders }: UserProfileDashboardProps) {
                   My Wishlist
                 </div>
                 <span className="text-[9px] font-black bg-neutral-950 text-pink-500 border border-neutral-800 rounded-full px-2 py-0.5">
-                  3
+                  {wishlist.length}
                 </span>
               </button>
               {activeTab === "wishlist" && (
