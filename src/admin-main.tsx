@@ -1,14 +1,19 @@
 
-window.addEventListener('error', function(e) {
-  document.body.innerHTML += '<div style="color:red;position:fixed;top:0;left:0;z-index:9999;background:white;padding:20px;">' + e.error?.message + '<br/>' + e.error?.stack + '</div>';
-});
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import AdminApp from './AdminApp.tsx';
 import './index.css';
+import { AppRescueBoundary } from './components/AppRescueBoundary';
+
+window.addEventListener('error', function(e) {
+  console.error("Global admin error caught:", e.error);
+  // Do not leak stack traces to the UI directly. Let the AppRescueBoundary or backend handle logging.
+});
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <AdminApp />
+    <AppRescueBoundary>
+      <AdminApp />
+    </AppRescueBoundary>
   </StrictMode>,
 );

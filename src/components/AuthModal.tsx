@@ -77,20 +77,6 @@ export function AuthModal({ onClose }: AuthModalProps) {
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    try {
-        setLoading(true);
-        await signInWithGoogle();
-        showToast('Welcome! Logged in with Google.', 'success');
-        onClose();
-    } catch (err: any) {
-        console.error("Google sign in error", err);
-        setError(err.message || 'Google sign in failed');
-    } finally {
-        setLoading(false);
-    }
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div 
@@ -300,6 +286,7 @@ export function AuthModal({ onClose }: AuthModalProps) {
                           setError('');
                           if (credentialResponse.credential) {
                               await signInWithGoogle(credentialResponse.credential);
+                              showToast('Welcome! Successfully logged in with Google.', 'success');
                               onClose();
                           }
                         } catch (err: any) {

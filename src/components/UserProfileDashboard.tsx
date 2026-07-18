@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { useToast } from "../contexts/ToastContext";
 import {
   User,
   Mail,
@@ -59,6 +60,7 @@ export function UserProfileDashboard({
   products
 }: UserProfileDashboardProps) {
   const { user, role, profile, updateProfile, logOut } = useAuth();
+  const { showToast } = useToast();
 
   // Local active tab
   const [activeTab, setActiveTab] = useState<Tab>("personal");
@@ -205,9 +207,11 @@ export function UserProfileDashboard({
       localStorage.setItem("tizz_profile_avatar", avatarUrl);
 
       setSaveSuccess(true);
+      showToast("Profile updated successfully!", "success");
       setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      showToast(e.message || "Failed to update profile.", "error");
     } finally {
       setIsSaving(false);
     }
@@ -216,23 +220,30 @@ export function UserProfileDashboard({
   const handleSaveAddresses = () => {
     setIsSaving(true);
     setTimeout(async () => {
-      localStorage.setItem("tizz_addr_city", addressCity);
-      localStorage.setItem("tizz_addr_state", addressState);
-      localStorage.setItem("tizz_addr_post", addressPost);
-      localStorage.setItem("tizz_addr_country", addressCountry);
+      try {
+        localStorage.setItem("tizz_addr_city", addressCity);
+        localStorage.setItem("tizz_addr_state", addressState);
+        localStorage.setItem("tizz_addr_post", addressPost);
+        localStorage.setItem("tizz_addr_country", addressCountry);
 
-      if (updateProfile) {
-        await updateProfile({ 
-          address: editAddress, 
-          lga: addressCity,
-          city: addressCity,
-          stateLocation: addressState 
-        });
+        if (updateProfile) {
+          await updateProfile({ 
+            address: editAddress, 
+            lga: addressCity,
+            city: addressCity,
+            stateLocation: addressState 
+          });
+        }
+
+        setIsSaving(false);
+        setSaveSuccess(true);
+        showToast("Delivery address saved successfully!", "success");
+        setTimeout(() => setSaveSuccess(false), 3000);
+      } catch (err: any) {
+        setIsSaving(false);
+        console.error(err);
+        showToast(err.message || "Failed to save address details.", "error");
       }
-
-      setIsSaving(false);
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
     }, 800);
   };
 

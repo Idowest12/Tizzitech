@@ -172,6 +172,15 @@ function getFirebaseDb() {
   }
 }
 
+interface GeoData {
+  country: string;
+  region: string;
+  city: string;
+}
+
+const geoCache = new Map<string, { data: GeoData; timestamp: number }>();
+const GEO_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours cache
+
 async function getRequestGeo(req: express.Request) {
   // 1. Try cloud provider / CDN headers first
   let country = (req.headers['x-client-geo-country'] || req.headers['x-appengine-country'] || req.headers['cf-ipcountry'] || '').toString().trim().toUpperCase();
@@ -193,6 +202,12 @@ async function getRequestGeo(req: express.Request) {
     ip = ip.substring(7);
   }
 
+  // Check in-memory cache first
+  const cached = geoCache.get(ip);
+  if (cached && (Date.now() - cached.timestamp < GEO_CACHE_TTL_MS)) {
+    return cached.data;
+  }
+
   // Check if IP is localhost or private
   const isLocal = !ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('172.16.') || ip.startsWith('172.31.');
 
@@ -209,11 +224,13 @@ async function getRequestGeo(req: express.Request) {
         if (text && (text.startsWith('{') || text.startsWith('['))) {
           const data = JSON.parse(text);
           if (data && data.status === 'success') {
-            return {
+            const result = {
               country: data.countryCode ? data.countryCode.toUpperCase() : 'Unknown',
               region: data.regionName || data.region || 'Unknown',
               city: data.city || 'Unknown'
             };
+            geoCache.set(ip, { data: result, timestamp: Date.now() });
+            return result;
           }
         }
       }
@@ -233,11 +250,13 @@ async function getRequestGeo(req: express.Request) {
         if (text && (text.startsWith('{') || text.startsWith('['))) {
           const data = JSON.parse(text);
           if (data && data.country_code) {
-            return {
+            const result = {
               country: data.country_code.toUpperCase(),
               region: data.region || data.region_code || 'Unknown',
               city: data.city || 'Unknown'
             };
+            geoCache.set(ip, { data: result, timestamp: Date.now() });
+            return result;
           }
         } else {
           console.warn(`[GEO IPAPI.CO SKIPPED] Non-JSON response received`);
@@ -371,7 +390,7 @@ const verifyAdminToken = (req: express.Request, res: express.Response, next: exp
   }
   
   try {
-    const decoded = jwt.decode(token) as any;
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
     if (!decoded || !decoded.email) {
       return res.status(401).json({ error: 'Invalid token structure.' });
     }
@@ -443,13 +462,16 @@ app.get('/api/payment/verify', apiLimiter, async (req, res) => {
 
 // ANALYTICS: VISIT TRACKER
 app.post('/api/analytics/visit', async (req, res) => {
-  const { visitorId, isRegistered } = req.body;
+  const { visitorId, isRegistered, clientGeo } = req.body;
   const db = getFirebaseDb();
   const timestamp = new Date().toISOString();
   
   if (db) {
     try {
-      const geo = await getRequestGeo(req);
+      let geo = clientGeo;
+      if (!geo || !geo.country || geo.country === 'Unknown' || geo.country === 'UNKNOWN') {
+        geo = await getRequestGeo(req);
+      }
       const visitId = `v_${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
       await setDoc(doc(db, 'analytics_visits', visitId), {
         id: visitId,
@@ -470,9 +492,21 @@ app.post('/api/analytics/visit', async (req, res) => {
   return res.json({ success: true });
 });
 
-// 1. GET ALL PRODUCTS
+// In-memory server-side caches with TTL to optimize Firestore reads under concurrent load
+let cachedProductsList: any = null;
+let cachedProductsExpiry = 0;
+let cachedSettingsList: any = null;
+let cachedSettingsExpiry = 0;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache
+
+// 1. GET ALL PRODUCTS (WITH SERVER-SIDE CACHING)
 app.get('/api/products', apiLimiter, async (req, res) => {
-  console.log('>>> FETCHING PRODUCTS');
+  const now = Date.now();
+  if (cachedProductsList && now < cachedProductsExpiry) {
+    return res.json(cachedProductsList);
+  }
+
+  console.log('>>> FETCHING PRODUCTS (CACHE MISS)');
   const db = getFirebaseDb();
   if (db) {
     try {
@@ -480,6 +514,8 @@ app.get('/api/products', apiLimiter, async (req, res) => {
       const querySnapshot = await getDocs(q);
       const data = querySnapshot.docs.map((d: any) => d.data());
       
+      cachedProductsList = data;
+      cachedProductsExpiry = now + CACHE_TTL_MS;
       return res.json(data);
     } catch (err: any) {
       console.log('Firestore fallback for /api/products:', err.message);
@@ -488,6 +524,31 @@ app.get('/api/products', apiLimiter, async (req, res) => {
 
   // Fallback to local state
   return res.json(fallbackProducts);
+});
+
+// 2. GET GLOBAL GLOBAL SETTINGS (WITH SERVER-SIDE CACHING)
+app.get('/api/settings', async (req, res) => {
+  const now = Date.now();
+  if (cachedSettingsList && now < cachedSettingsExpiry) {
+    return res.json(cachedSettingsList);
+  }
+
+  console.log('>>> FETCHING SETTINGS (CACHE MISS)');
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      const settingsSnap = await getDoc(doc(db, 'settings', 'global'));
+      if (settingsSnap.exists()) {
+        const s = settingsSnap.data();
+        cachedSettingsList = s;
+        cachedSettingsExpiry = now + CACHE_TTL_MS;
+        return res.json(s);
+      }
+    } catch (err: any) {
+      console.log('Error fetching global settings from Firestore:', err.message);
+    }
+  }
+  return res.json({});
 });
 
 app.post('/api/products/:productId/reviews', async (req, res) => {
@@ -935,11 +996,12 @@ app.patch('/api/products/:productId/stock', verifyAdminToken, async (req, res) =
 
 // Admin and Auth Rate Limiters moved up
 
-// 5. ADMIN: RETRIEVE ALL ORDERS
+// 5. ADMIN: RETRIEVE ALL ORDERS (OPTIMIZED: In-Memory join to prevent N+1 sequential query blocking)
 app.get('/api/admin/orders', verifyAdminToken, async (req, res) => {
   const db = getFirebaseDb();
   if (db) {
     try {
+      // 1. Fetch all orders (1 query)
       const ordersSnap = await getDocs(collection(db, 'orders'));
       let ordersRows = ordersSnap.docs.map((d: any) => d.data());
       ordersRows.sort((a, b) => {
@@ -952,24 +1014,44 @@ app.get('/api/admin/orders', verifyAdminToken, async (req, res) => {
         return cleanB - cleanA;
       });
 
+      // 2. Fetch all products once to map them by ID (1 query)
+      const productsSnap = await getDocs(collection(db, 'products'));
+      const productsMap = new Map<string, any>();
+      productsSnap.docs.forEach((d: any) => {
+        productsMap.set(d.id, d.data());
+      });
+
+      // 3. Fetch all order_items once to map by order_id (1 query)
+      const orderItemsSnap = await getDocs(collection(db, 'order_items'));
+      const orderItemsMap = new Map<string, any[]>();
+      orderItemsSnap.docs.forEach((d: any) => {
+        const data = d.data();
+        const orderId = data.order_id;
+        if (orderId) {
+          if (!orderItemsMap.has(orderId)) {
+            orderItemsMap.set(orderId, []);
+          }
+          orderItemsMap.get(orderId)!.push(data);
+        }
+      });
+
+      // 4. Join them completely in-memory O(N + M + P) - No nested queries!
       const ordersData = [];
       for (const order of ordersRows) {
-        const itemsQ = query(collection(db, 'order_items'), where('order_id', '==', order.id || ''));
-        const itemsSnap = await getDocs(itemsQ);
-        
+        const itemsDocs = orderItemsMap.get(order.id || '') || [];
         const itemsArray = [];
-        for (const iDoc of itemsSnap.docs) {
-           const iData = iDoc.data();
-           let pData: any = null;
-           const pSnap = await getDoc(doc(db, 'products', iData.product_id));
-           if (pSnap.exists()) pData = pSnap.data();
+        for (const iData of itemsDocs) {
+           const pData = productsMap.get(iData.product_id) || null;
            itemsArray.push({
-             id: iData.product_id, name: pData?.name, brand: pData?.brand,
-             category: pData?.category, price: iData.price, quantity: iData.quantity,
-             imageUrl: pData?.imageUrl
+             id: iData.product_id, 
+             name: pData?.name || 'Unknown Product', 
+             brand: pData?.brand || 'Unknown',
+             category: pData?.category || 'Unknown', 
+             price: iData.price, 
+             quantity: iData.quantity,
+             imageUrl: pData?.imageUrl || ''
            });
         }
-        const itemsRows = itemsArray;
         ordersData.push({
           id: order.id,
           fullname: order.fullname,
@@ -980,7 +1062,7 @@ app.get('/api/admin/orders', verifyAdminToken, async (req, res) => {
           status: order.status,
           orderDate: order.orderDate || order.order_date,
           expectedDeliveryDate: order.expectedDeliveryDate || order.expected_delivery_date,
-          items: itemsRows
+          items: itemsArray
         });
       }
       return res.json(ordersData);
@@ -1182,7 +1264,7 @@ app.post('/api/admin/upload-image', verifyAdminToken, express.json({limit: '10mb
 });
 
 // 8b. ADMIN: SEED DATABASE
-app.post("/api/admin/force-seed", async (req, res) => {
+app.post("/api/admin/force-seed", verifyAdminToken, async (req, res) => {
   const db = getFirebaseDb();
   if (!db) return res.status(500).json({ success: false, message: "No db" });
   try {
@@ -1250,7 +1332,7 @@ app.get('/api/firestore-test', async (req, res) => {
 
 // 11. USER REGISTRATION
 app.post('/api/auth/register', authLimiter, async (req, res) => {
-  const { email, password, firstName, surname, address, phone } = req.body;
+  const { email, password, firstName, surname, address, phone, clientGeo } = req.body;
   if (!email || !password) return res.status(400).json({ success: false, message: 'Email and password required' });
 
   const userId = `U${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
@@ -1264,7 +1346,10 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       const existSnap = await getDocs(existQ);
       if (!existSnap.empty) return res.status(400).json({ success: false, message: 'Email already registered' });
 
-      const geo = await getRequestGeo(req);
+      let geo = clientGeo;
+      if (!geo || !geo.country || geo.country === 'Unknown' || geo.country === 'UNKNOWN') {
+        geo = await getRequestGeo(req);
+      }
       await setDoc(doc(db, 'users', userId), {
         id: userId, email, password: hashedPassword,
         firstname: firstName, lastname: surname, address, phone, role: 'user',
@@ -1422,7 +1507,7 @@ app.post('/api/auth/update-password', async (req, res) => {
   return res.status(404).json({ success: false, message: 'User not found' });
 });
 app.post('/api/auth/google', authLimiter, async (req, res) => {
-  const { credential } = req.body;
+  const { credential, clientGeo } = req.body;
   if (!credential) return res.status(400).json({ success: false, message: 'Google token required' });
 
   try {
@@ -1446,7 +1531,10 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
         let userId = user?.id;
         
         if (!user) {
-          const geo = await getRequestGeo(req);
+          let geo = clientGeo;
+          if (!geo || !geo.country || geo.country === 'Unknown' || geo.country === 'UNKNOWN') {
+            geo = await getRequestGeo(req);
+          }
           userId = `U${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
           user = {
             id: userId, email, password: 'oauth_user_no_password',
@@ -1557,7 +1645,7 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
 
 // 12. USER LOGIN
 app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, clientGeo } = req.body;
   if (!email || !password) return res.status(400).json({ success: false, message: 'Email and password required' });
 
   const db = getFirebaseDb();
@@ -1572,9 +1660,12 @@ app.post('/api/auth/login', async (req, res) => {
       const isValid = await bcrypt.compare(password, user.password);
       if (!isValid) return res.status(401).json({ success: false, message: 'Invalid credentials' });
 
-      if (!user.country || !user.region) {
+      if (!user.country || !user.region || user.country === 'Unknown' || user.country === 'UNKNOWN') {
         try {
-          const geo = await getRequestGeo(req);
+          let geo = clientGeo;
+          if (!geo || !geo.country || geo.country === 'Unknown' || geo.country === 'UNKNOWN') {
+            geo = await getRequestGeo(req);
+          }
           await updateDoc(doc(db, 'users', user.id), {
             country: geo.country,
             region: geo.region,
@@ -1713,8 +1804,8 @@ app.get('/api/users/:userId/orders', async (req, res) => {
   let decoded: any;
   try {
     decoded = jwt.verify(token, JWT_SECRET);
-    // Relaxed check: if it's the right user, or an admin, or the ID is a Google fallback ID
-    if (decoded.userId !== userId && decoded.role !== 'admin' && !userId.startsWith('g_')) {
+    // Secure check: only allow the user themselves or an admin to access these orders
+    if (decoded.userId !== userId && decoded.role !== 'admin') {
       return res.status(403).json({ error: 'Forbidden' });
     }
   } catch (err) {
@@ -2056,21 +2147,20 @@ app.post('/api/admin/send-otp', async (req, res) => {
   const fbDb = getFirebaseDb();
   if (!fbDb) return res.status(500).json({ success: false, message: 'No DB' });
 
+  const dId = getDocId(email);
   try {
-    let adminDocs = await getDocs(query(collection(fbDb, 'admins'), where('email', '==', email)));
+    let adminSnap = await getDoc(doc(fbDb, 'admins', dId));
     
-    if (adminDocs.empty) {
-      const allAdmins = await getDocs(collection(fbDb, 'admins'));
-      if (allAdmins.empty && email === 'idowutosin70@gmail.com') {
-         const dId = getDocId(email);
-         await setDoc(doc(fbDb, 'admins', dId), { email, addedAt: new Date().toISOString() });
-         adminDocs = await getDocs(query(collection(fbDb, 'admins'), where('email', '==', email)));
-      }
+    // Auto-create/seed the super administrator if no administrator exists yet
+    if (!adminSnap.exists() && email === 'idowutosin70@gmail.com') {
+      await setDoc(doc(fbDb, 'admins', dId), { email, addedAt: new Date().toISOString() });
+      adminSnap = await getDoc(doc(fbDb, 'admins', dId));
     }
 
-    if (adminDocs.empty) return res.status(403).json({ success: false, message: 'Unauthorized email' });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: 'DB Error' });
+    if (!adminSnap.exists()) return res.status(403).json({ success: false, message: 'Unauthorized email' });
+  } catch (err: any) {
+    console.error('send-otp database check failed:', err.message);
+    return res.status(500).json({ success: false, message: 'DB Error: ' + err.message });
   }
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -2081,7 +2171,9 @@ app.post('/api/admin/send-otp', async (req, res) => {
 
   try {
     await setDoc(doc(fbDb, 'admin_otps', docId), { hash: hashedOtp, expires });
-  } catch(e) {}
+  } catch(e: any) {
+    console.error('Failed to save OTP:', e.message);
+  }
 
   const subject = "Tizzitech Admin Portal - Your Access Code";
   const html = `<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #fff; padding: 20px;">
@@ -2108,17 +2200,14 @@ app.post('/api/admin/verify-otp', async (req, res) => {
   const fbDb = getFirebaseDb();
   if (!fbDb) return res.status(500).json({ success: false });
 
+  const dId = getDocId(email);
   try {
-    let adminDocs = await getDocs(query(collection(fbDb, 'admins'), where('email', '==', email)));
-    if (adminDocs.empty) {
-      const allAdmins = await getDocs(collection(fbDb, 'admins'));
-      if (allAdmins.empty && email === 'idowutosin70@gmail.com') {
-         const dId = getDocId(email);
-         await setDoc(doc(fbDb, 'admins', dId), { email, addedAt: new Date().toISOString() });
-         adminDocs = await getDocs(query(collection(fbDb, 'admins'), where('email', '==', email)));
-      }
+    let adminSnap = await getDoc(doc(fbDb, 'admins', dId));
+    if (!adminSnap.exists() && email === 'idowutosin70@gmail.com') {
+      await setDoc(doc(fbDb, 'admins', dId), { email, addedAt: new Date().toISOString() });
+      adminSnap = await getDoc(doc(fbDb, 'admins', dId));
     }
-    if (adminDocs.empty) return res.status(403).json({ success: false, message: 'Unauthorized' });
+    if (!adminSnap.exists()) return res.status(403).json({ success: false, message: 'Unauthorized' });
   } catch (err) {
     return res.status(500).json({ success: false });
   }
@@ -2158,9 +2247,10 @@ app.post('/api/admin/validate-session', async (req, res) => {
   const fbDb = getFirebaseDb();
   if (!fbDb) return res.json({ valid: false });
 
+  const dId = getDocId(email);
   try {
-    const adminDocs = await getDocs(query(collection(fbDb, 'admins'), where('email', '==', email)));
-    if (adminDocs.empty) return res.status(403).json({ valid: false });
+    const adminSnap = await getDoc(doc(fbDb, 'admins', dId));
+    if (!adminSnap.exists()) return res.status(403).json({ valid: false });
   } catch (err) {
     return res.status(500).json({ valid: false });
   }
@@ -2198,6 +2288,45 @@ app.post('/api/admin/logout', async (req, res) => {
     }
   }
   res.json({ success: true });
+});
+
+// 16. CENTRALIZED SYSTEM OBSERVABILITY & SECURITY SAFEGUARDS
+
+// API endpoint to log client-side errors captured by the React ErrorBoundary
+app.post('/api/logs/client-error', express.json(), async (req, res) => {
+  const { message, stack, componentStack, url, userAgent, timestamp } = req.body;
+  console.error('>>> React client-side exception received:', { message, url, timestamp });
+
+  const fbDb = getFirebaseDb();
+  if (fbDb) {
+    try {
+      await addDoc(collection(fbDb, 'client_error_logs'), {
+        message: message || 'Unknown client error',
+        stack: stack || '',
+        componentStack: componentStack || '',
+        url: url || '',
+        userAgent: userAgent || '',
+        timestamp: timestamp || new Date().toISOString(),
+        loggedAt: new Date().toISOString()
+      });
+    } catch (err: any) {
+      console.warn('Failed to write client error log to Firestore:', err.message);
+    }
+  }
+  return res.json({ success: true });
+});
+
+// Global Centralized Express Error-Handling Middleware
+// Prevents unhandled server-side route crashes from leaking raw stacks/database logs to users
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('>>> UNHANDLED EXPRESS BACKEND SYSTEM EXCEPTION:', err.stack || err);
+  
+  const status = err.status || err.statusCode || 500;
+  return res.status(status).json({
+    success: false,
+    message: 'An unexpected processing error occurred on our server. Our operations team has been notified.',
+    error: process.env.NODE_ENV === 'development' ? err.message : 'Internal Server Error'
+  });
 });
 
 async function boot() {

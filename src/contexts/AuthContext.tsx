@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { jwtDecode } from 'jwt-decode';
+import { useToast } from './ToastContext';
 
 interface UserProfile {
   uid: string;
@@ -51,6 +52,7 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const { showToast } = useToast();
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<'admin' | 'user' | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -95,10 +97,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       let jwtConfiguredToken = credential; // Fallback token
       
       try {
+        let clientGeo = null;
+        try {
+          const cached = localStorage.getItem('tizzitech_client_geo');
+          if (cached) clientGeo = JSON.parse(cached);
+        } catch (e) {}
+
         const res = await fetch('/api/auth/google', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credential })
+          body: JSON.stringify({ credential, clientGeo })
         });
         const text = await res.text();
         const data = text ? JSON.parse(text) : null;
@@ -135,10 +143,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const registerWithEmail = async (email: string, password: string, additionalData: any) => {
+    let clientGeo = null;
+    try {
+      const cached = localStorage.getItem('tizzitech_client_geo');
+      if (cached) clientGeo = JSON.parse(cached);
+    } catch (e) {}
+
     const res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, ...additionalData })
+      body: JSON.stringify({ email, password, ...additionalData, clientGeo })
     });
     
     let data;
@@ -163,10 +177,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const loginWithEmail = async (email: string, password: string) => {
+    let clientGeo = null;
+    try {
+      const cached = localStorage.getItem('tizzitech_client_geo');
+      if (cached) clientGeo = JSON.parse(cached);
+    } catch (e) {}
+
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password, clientGeo })
     });
     
     let data;
@@ -251,6 +271,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
     localStorage.removeItem('authProfile');
+    showToast('Logged out successfully. See you again soon!', 'info');
   };
 
   return (

@@ -6,6 +6,9 @@ interface Subscriber {
   email: string;
   subscribedAt: string;
   status: string;
+  deliveryStatus?: string;
+  welcomeEmailSent?: boolean;
+  emailError?: string;
 }
 
 export function NewsletterAdmin() {

@@ -1,8 +1,87 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    
+    // Helper to check if the user is the super administrator
+    function isSuperAdmin() {
+      return request.auth != null && request.auth.token.email == 'idowutosin70@gmail.com';
+    }
+
+    // Helper to check if user owns the document
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // Admins list: allow unauthenticated get (lookup by secure hashed email ID) and create for superadmin, but restrict listing/writing
+    match /admins/{adminId} {
+      allow get: if true;
+      allow create: if request.resource.data.email == 'idowutosin70@gmail.com';
+      allow list, update, delete: if isSuperAdmin();
+    }
+
+    // Admin OTPs (lookup and write by secure 64-char hex hashed email ID)
+    match /admin_otps/{otpId} {
+      allow get, write: if otpId is string && otpId.size() == 64;
+    }
+
+    // Admin Sessions (lookup and write by secure 64-char hex hashed email ID)
+    match /admin_sessions/{sessionId} {
+      allow get, write: if sessionId is string && sessionId.size() == 64;
+    }
+
+    // Products: everyone can read, only super admins can write
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // Settings: everyone can read, only super admins can write
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // Orders: only super admins or the owner can read/write
+    match /orders/{orderId} {
+      allow read: if isSuperAdmin() || 
+                    (request.auth != null && (resource.data.userId == request.auth.uid || resource.data.email == request.auth.token.email));
+      allow write: if isSuperAdmin() || 
+                    (request.auth != null && (request.resource.data.userId == request.auth.uid || request.resource.data.email == request.auth.token.email));
+    }
+
+    // Order items: only super admins or the owner can read/write
+    match /order_items/{itemId} {
+      allow read: if isSuperAdmin() || 
+                    (request.auth != null && (resource.data.userId == request.auth.uid || resource.data.email == request.auth.token.email));
+      allow write: if isSuperAdmin() || 
+                    (request.auth != null && (request.resource.data.userId == request.auth.uid || request.resource.data.email == request.auth.token.email));
+    }
+
+    // Users: only super admins or the user themselves can read/write
+    match /users/{userId} {
+      allow read, write: if isSuperAdmin() || isOwner(userId);
+    }
+
+    // Audit logs & Analytics: only admins can read, everyone can write
+    match /audit_logs/{logId} {
+      allow read: if isSuperAdmin();
+      allow write: if true;
+    }
+
+    match /analytics_visits/{visitId} {
+      allow read: if isSuperAdmin();
+      allow write: if true;
+    }
+
+    match /newsletter_subscribers/{subId} {
+      allow read: if isSuperAdmin();
+      allow write: if true;
+    }
+
+    // Default catch-all
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if isSuperAdmin();
     }
   }
 }
+

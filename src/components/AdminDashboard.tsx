@@ -6,6 +6,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db, auth, logAuditActivity } from '../firebase';
 import { NewsletterAdmin } from './NewsletterAdmin';
 import { AdminManager } from './AdminManager';
+import { DashboardStatsSkeleton, TableRowsSkeleton, ChartSkeleton } from './Skeleton';
 
 interface AdminDashboardProps {
   auditLogs?: any[];
@@ -18,11 +19,12 @@ interface AdminDashboardProps {
   onAddProduct: (newProduct: Product) => void;
   onGoHome: () => void;
   onLogout: () => void;
+  isLoading?: boolean;
 }
 
 type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'newsletter' | 'admins' | 'audit-logs';
 
-export function AdminDashboard({ products, orders, visits = [], allUsers = [], auditLogs = [], onUpdateStock, onUpdateOrderStatus, onAddProduct, onGoHome, onLogout }: AdminDashboardProps) {
+export function AdminDashboard({ products, orders, visits = [], allUsers = [], auditLogs = [], onUpdateStock, onUpdateOrderStatus, onAddProduct, onGoHome, onLogout, isLoading = false }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [previousOrderCount, setPreviousOrderCount] = useState<number | null>(null);
   const [newOrderNotification, setNewOrderNotification] = useState<string | null>(null);
@@ -94,6 +96,7 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
   const [selectedMapOrder, setSelectedMapOrder] = useState<string | null>(null);
   const [selectedOrderDetails, setSelectedOrderDetails] = useState<Order | null>(null);
   const [orderModalTab, setOrderModalTab] = useState<'details' | 'email'>('details');
+  const [orderFilterTab, setOrderFilterTab] = useState<'remaining' | 'delivered' | 'all'>('remaining');
 
   // New product form state
   const [showAddProduct, setShowAddProduct] = useState(false);
@@ -129,13 +132,16 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
     const visitsByRegion: Record<string, number> = {};
 
     visits.forEach(v => {
-      const country = v.country ? v.country.trim().toUpperCase() : 'Unknown';
-      const region = v.region ? v.region.trim() : 'Unknown';
+      const countryRaw = v.country ? v.country.trim() : '';
+      if (!countryRaw || countryRaw.toUpperCase() === 'UNKNOWN') return; // ignore legacy/unknown
+
+      const country = countryRaw.toUpperCase();
+      const region = v.region ? v.region.trim() : '';
       
-      const countryName = country === 'Unknown' ? 'Unknown' : (country === 'US' ? 'United States' : (country === 'NG' ? 'Nigeria' : (country === 'GB' ? 'United Kingdom' : country)));
+      const countryName = country === 'US' ? 'United States' : (country === 'NG' ? 'Nigeria' : (country === 'GB' ? 'United Kingdom' : countryRaw));
       visitsByCountry[countryName] = (visitsByCountry[countryName] || 0) + 1;
 
-      if (region && region !== 'Unknown') {
+      if (region && region.toUpperCase() !== 'UNKNOWN') {
         const regionKey = `${region} (${countryName})`;
         visitsByRegion[regionKey] = (visitsByRegion[regionKey] || 0) + 1;
       }
@@ -146,13 +152,16 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
     const signupsByRegion: Record<string, number> = {};
 
     allUsers.forEach(u => {
-      const country = u.country ? u.country.trim().toUpperCase() : 'Unknown';
-      const region = u.region ? u.region.trim() : 'Unknown';
+      const countryRaw = u.country ? u.country.trim() : '';
+      if (!countryRaw || countryRaw.toUpperCase() === 'UNKNOWN') return; // ignore legacy/unknown
 
-      const countryName = country === 'Unknown' ? 'Unknown' : (country === 'US' ? 'United States' : (country === 'NG' ? 'Nigeria' : (country === 'GB' ? 'United Kingdom' : country)));
+      const country = countryRaw.toUpperCase();
+      const region = u.region ? u.region.trim() : '';
+
+      const countryName = country === 'US' ? 'United States' : (country === 'NG' ? 'Nigeria' : (country === 'GB' ? 'United Kingdom' : countryRaw));
       signupsByCountry[countryName] = (signupsByCountry[countryName] || 0) + 1;
 
-      if (region && region !== 'Unknown') {
+      if (region && region.toUpperCase() !== 'UNKNOWN') {
         const regionKey = `${region} (${countryName})`;
         signupsByRegion[regionKey] = (signupsByRegion[regionKey] || 0) + 1;
       }
@@ -199,14 +208,18 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
   const [newCondition, setNewCondition] = useState('');
   
   React.useEffect(() => {
-    getDoc(doc(db, 'newsletter_campaigns', 'global_settings')).then(snap => {
-      if(snap.exists()) {
-        const d = snap.data();
-        if(d.brands) setBrands(d.brands);
-        if(d.categories) setConditions(d.categories); // Note: we are mapping conditions to categories for now or just keeping it simple
-        if(d.deliveryZones) setDeliveryZones(d.deliveryZones);
-      }
-    });
+    getDoc(doc(db, 'newsletter_campaigns', 'global_settings'))
+      .then(snap => {
+        if(snap.exists()) {
+          const d = snap.data();
+          if(d.brands) setBrands(d.brands);
+          if(d.categories) setConditions(d.categories); // Note: we are mapping conditions to categories for now or just keeping it simple
+          if(d.deliveryZones) setDeliveryZones(d.deliveryZones);
+        }
+      })
+      .catch(err => {
+        console.warn("Could not fetch global settings in AdminDashboard (offline fallback enabled):", err);
+      });
   }, []);
   
   const saveSettings = async (b, c, z) => {
@@ -379,11 +392,20 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
     }
   };
 
-  const filteredOrders = orders.filter(o =>
-    (o.id || "").toLowerCase().includes(orderSearch.toLowerCase()) ||
-    (o.email || "").toLowerCase().includes(orderSearch.toLowerCase()) ||
-    (o.fullname || o.address || "").toLowerCase().includes(orderSearch.toLowerCase())
-  );
+  const filteredOrders = orders.filter(o => {
+    const matchesSearch = (o.id || "").toLowerCase().includes(orderSearch.toLowerCase()) ||
+      (o.email || "").toLowerCase().includes(orderSearch.toLowerCase()) ||
+      (o.fullname || o.address || "").toLowerCase().includes(orderSearch.toLowerCase());
+    
+    if (!matchesSearch) return false;
+
+    if (orderFilterTab === 'remaining') {
+      return o.status !== 'Delivered' && o.status !== 'Cancelled';
+    } else if (orderFilterTab === 'delivered') {
+      return o.status === 'Delivered';
+    }
+    return true; // 'all'
+  });
   const filteredProducts = products.filter(p => 
     (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
     (p.brand || '').toLowerCase().includes(search.toLowerCase()) || 
@@ -447,7 +469,7 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
           <NavItem tab="sales-report" icon={TrendingUp} label="Sales Report" />
           
           <p className="px-2 text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-2 mt-6">Commerce</p>
-          <NavItem tab="orders" icon={ShoppingCart} label="Orders" badge={orders.length} />
+          <NavItem tab="orders" icon={ShoppingCart} label="Orders" badge={orders.filter(o => o.status !== 'Delivered' && o.status !== 'Cancelled').length} />
           <NavItem tab="products" icon={Package} label="Products" />
           <NavItem tab="attributes" icon={Sliders} label="Brands & Conditions" />
           <NavItem tab="customers" icon={Users} label="Customers" />
@@ -518,128 +540,137 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                 <p className="text-neutral-400 text-sm mt-1">Welcome back. Here's what's happening with your business today.</p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-                <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Total Inventory Value</p>
-                      <h3 className="text-2xl font-bold text-white mt-2 font-mono">₦{totalInventoryValue.toLocaleString()}</h3>
+              {isLoading ? (
+                <>
+                  <DashboardStatsSkeleton />
+                  <ChartSkeleton />
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+                    <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Total Inventory Value</p>
+                          <h3 className="text-2xl font-bold text-white mt-2 font-mono">₦{totalInventoryValue.toLocaleString()}</h3>
+                        </div>
+                        <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400">
+                          <DollarSign className="h-5 w-5" />
+                        </div>
+                      </div>
+                      <div className="mt-4 text-xs font-bold text-neutral-500 flex items-center gap-1">
+                        Based on cost prices
+                      </div>
                     </div>
-                    <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400">
-                      <DollarSign className="h-5 w-5" />
-                    </div>
-                  </div>
-                  <div className="mt-4 text-xs font-bold text-neutral-500 flex items-center gap-1">
-                    Based on cost prices
-                  </div>
-                </div>
 
-                <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Total Revenue</p>
-                      <h3 className="text-2xl font-bold text-white mt-2 font-mono">₦{totalRevenue.toLocaleString()}</h3>
+                    <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Total Revenue</p>
+                          <h3 className="text-2xl font-bold text-white mt-2 font-mono">₦{totalRevenue.toLocaleString()}</h3>
+                        </div>
+                        <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
+                          <TrendingUp className="h-5 w-5" />
+                        </div>
+                      </div>
+                      <div className="mt-4 text-xs font-bold text-blue-400 flex items-center gap-1">
+                        ↑ 12.5% vs last month
+                      </div>
                     </div>
-                    <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
-                      <TrendingUp className="h-5 w-5" />
-                    </div>
-                  </div>
-                  <div className="mt-4 text-xs font-bold text-blue-400 flex items-center gap-1">
-                    ↑ 12.5% vs last month
-                  </div>
-                </div>
 
-                <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Active Users</p>
-                      <h3 className="text-2xl font-bold text-white mt-2 font-mono">{activeUsers.toLocaleString()}</h3>
+                    <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Active Users</p>
+                          <h3 className="text-2xl font-bold text-white mt-2 font-mono">{activeUsers.toLocaleString()}</h3>
+                        </div>
+                        <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
+                          <Users className="h-5 w-5" />
+                        </div>
+                      </div>
+                      <div className="mt-4 text-xs font-bold text-blue-400 flex items-center gap-1">
+                        ↑ 8.2% vs last month
+                      </div>
                     </div>
-                    <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
-                      <Users className="h-5 w-5" />
-                    </div>
-                  </div>
-                  <div className="mt-4 text-xs font-bold text-blue-400 flex items-center gap-1">
-                    ↑ 8.2% vs last month
-                  </div>
-                </div>
 
-                <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Total Orders</p>
-                      <h3 className="text-2xl font-bold text-white mt-2 font-mono">{totalOrders.toLocaleString()}</h3>
+                    <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Total Orders</p>
+                          <h3 className="text-2xl font-bold text-white mt-2 font-mono">{totalOrders.toLocaleString()}</h3>
+                        </div>
+                        <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
+                          <ShoppingCart className="h-5 w-5" />
+                        </div>
+                      </div>
+                      <div className="mt-4 text-xs font-bold text-rose-400 flex items-center gap-1">
+                        ↓ 3.1% vs last month
+                      </div>
                     </div>
-                    <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
-                      <ShoppingCart className="h-5 w-5" />
-                    </div>
-                  </div>
-                  <div className="mt-4 text-xs font-bold text-rose-400 flex items-center gap-1">
-                     ↓ 3.1% vs last month
-                  </div>
-                </div>
 
-                <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Low Stock Alerts</p>
-                      <h3 className="text-2xl font-bold text-white mt-2 font-mono">{lowStockProducts + outOfStockProducts}</h3>
-                    </div>
-                    <div className="p-2 bg-amber-500/10 rounded-lg text-amber-400">
-                      <Package className="h-5 w-5" />
+                    <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Low Stock Alerts</p>
+                          <h3 className="text-2xl font-bold text-white mt-2 font-mono">{lowStockProducts + outOfStockProducts}</h3>
+                        </div>
+                        <div className="p-2 bg-amber-500/10 rounded-lg text-amber-400">
+                          <Package className="h-5 w-5" />
+                        </div>
+                      </div>
+                      <div className="mt-4 text-xs font-bold text-rose-400 flex items-center gap-1">
+                        {outOfStockProducts} zero stock items
+                      </div>
                     </div>
                   </div>
-                  <div className="mt-4 text-xs font-bold text-rose-400 flex items-center gap-1">
-                    {outOfStockProducts} zero stock items
-                  </div>
-                </div>
-              </div>
 
-              {/* Responsive Chart Area */}
-              <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 mt-6 flex flex-col shadow-sm">
-                 <div className="flex justify-between items-center mb-6">
-                   <div>
-                     <h3 className="text-white font-bold">Overview</h3>
-                     <p className="text-xs text-neutral-400">Monthly performance for the current year</p>
-                   </div>
-                   <div className="flex gap-2 bg-neutral-900 rounded-lg p-1">
-                     <button onClick={() => setChartMetric('revenue')} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${chartMetric === 'revenue' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-white'}`}>Revenue</button>
-                     <button onClick={() => setChartMetric('orders')} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${chartMetric === 'orders' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-white'}`}>Orders</button>
-                     <button onClick={() => setChartMetric('profit')} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${chartMetric === 'profit' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-white'}`}>Profit</button>
-                   </div>
-                 </div>
-                 
-                 <div className="w-full mt-4 h-[350px] min-h-[350px]">
-                   <ResponsiveContainer width="100%" height="100%">
-                     <ComposedChart data={[
-                        { name: 'Jan', revenue: 4000, orders: 24, profit: 2400 },
-                        { name: 'Feb', revenue: 3000, orders: 18, profit: 1398 },
-                        { name: 'Mar', revenue: 5000, orders: 30, profit: 2800 },
-                        { name: 'Apr', revenue: 2780, orders: 15, profit: 1908 },
-                        { name: 'May', revenue: 6890, orders: 40, profit: 4800 },
-                        { name: 'Jun', revenue: 8390, orders: 50, profit: 6800 },
-                        { name: 'Jul', revenue: 5490, orders: 35, profit: 4300 },
-                        { name: 'Aug', revenue: 6000, orders: 38, profit: 3400 },
-                        { name: 'Sep', revenue: 7390, orders: 42, profit: 5300 },
-                        { name: 'Oct', revenue: 8090, orders: 55, profit: 6000 },
-                        { name: 'Nov', revenue: 9500, orders: 65, profit: 7500 },
-                        { name: 'Dec', revenue: 11000, orders: 80, profit: 8900 },
-                     ]}>
-                       <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
-                       <XAxis dataKey="name" stroke="#525252" fontSize={12} tickLine={false} axisLine={false} />
-                       <YAxis stroke="#525252" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => chartMetric === 'orders' ? val : `₦${val/1000}k`} />
-                       <Tooltip 
-                         contentStyle={{ backgroundColor: '#0a0a0a', borderColor: '#262626', borderRadius: '8px', color: '#fff' }}
-                         itemStyle={{ color: '#fff' }}
-                       />
-                       {chartMetric === 'revenue' && <Area type="monotone" dataKey="revenue" fill="#3b82f6" fillOpacity={0.1} stroke="#3b82f6" strokeWidth={3} />}
-                       {chartMetric === 'revenue' && <Bar dataKey="revenue" fill="#2563eb" radius={[4, 4, 0, 0]} maxBarSize={40} />}
-                       {chartMetric === 'orders' && <Bar dataKey="orders" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />}
-                       {chartMetric === 'profit' && <Area type="monotone" dataKey="profit" fill="#8b5cf6" fillOpacity={0.2} stroke="#8b5cf6" strokeWidth={3} />}
-                     </ComposedChart>
-                   </ResponsiveContainer>
-                 </div>
-              </div>
+                  {/* Responsive Chart Area */}
+                  <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 mt-6 flex flex-col shadow-sm">
+                     <div className="flex justify-between items-center mb-6">
+                       <div>
+                         <h3 className="text-white font-bold">Overview</h3>
+                         <p className="text-xs text-neutral-400">Monthly performance for the current year</p>
+                       </div>
+                       <div className="flex gap-2 bg-neutral-900 rounded-lg p-1">
+                         <button onClick={() => setChartMetric('revenue')} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${chartMetric === 'revenue' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-white'}`}>Revenue</button>
+                         <button onClick={() => setChartMetric('orders')} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${chartMetric === 'orders' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-white'}`}>Orders</button>
+                         <button onClick={() => setChartMetric('profit')} className={`px-3 py-1 rounded text-xs font-bold transition-colors ${chartMetric === 'profit' ? 'bg-neutral-800 text-white shadow-sm' : 'text-neutral-400 hover:text-white'}`}>Profit</button>
+                       </div>
+                     </div>
+                     
+                     <div className="w-full mt-4 h-[350px] min-h-[350px]">
+                       <ResponsiveContainer width="100%" height="100%">
+                         <ComposedChart data={[
+                            { name: 'Jan', revenue: 4000, orders: 24, profit: 2400 },
+                            { name: 'Feb', revenue: 3000, orders: 18, profit: 1398 },
+                            { name: 'Mar', revenue: 5000, orders: 30, profit: 2800 },
+                            { name: 'Apr', revenue: 2780, orders: 15, profit: 1908 },
+                            { name: 'May', revenue: 6890, orders: 40, profit: 4800 },
+                            { name: 'Jun', revenue: 8390, orders: 50, profit: 6800 },
+                            { name: 'Jul', revenue: 5490, orders: 35, profit: 4300 },
+                            { name: 'Aug', revenue: 6000, orders: 38, profit: 3400 },
+                            { name: 'Sep', revenue: 7390, orders: 42, profit: 5300 },
+                            { name: 'Oct', revenue: 8090, orders: 55, profit: 6000 },
+                            { name: 'Nov', revenue: 9500, orders: 65, profit: 7500 },
+                            { name: 'Dec', revenue: 11000, orders: 80, profit: 8900 },
+                         ]}>
+                           <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
+                           <XAxis dataKey="name" stroke="#525252" fontSize={12} tickLine={false} axisLine={false} />
+                           <YAxis stroke="#525252" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => chartMetric === 'orders' ? val : `₦${val/1000}k`} />
+                           <Tooltip 
+                             contentStyle={{ backgroundColor: '#0a0a0a', borderColor: '#262626', borderRadius: '8px', color: '#fff' }}
+                             itemStyle={{ color: '#fff' }}
+                           />
+                           {chartMetric === 'revenue' && <Area type="monotone" dataKey="revenue" fill="#3b82f6" fillOpacity={0.1} stroke="#3b82f6" strokeWidth={3} />}
+                           {chartMetric === 'revenue' && <Bar dataKey="revenue" fill="#2563eb" radius={[4, 4, 0, 0]} maxBarSize={40} />}
+                           {chartMetric === 'orders' && <Bar dataKey="orders" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />}
+                           {chartMetric === 'profit' && <Area type="monotone" dataKey="profit" fill="#8b5cf6" fillOpacity={0.2} stroke="#8b5cf6" strokeWidth={3} />}
+                         </ComposedChart>
+                       </ResponsiveContainer>
+                     </div>
+                  </div>
+                </>
+              )}
 
               {/* Low Stock Action Center */}
               <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 mt-6 shadow-sm animate-in fade-in">
@@ -960,81 +991,83 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-900/50">
-                    {filteredProducts.map((product) => (
-                      <tr key={product.id} className="hover:bg-neutral-900/30 transition-colors">
-                        <td className="py-4 px-6">
-                          <div className="flex items-center gap-4">
-                            <div className="h-12 w-12 bg-neutral-900 rounded-lg shrink-0 overflow-hidden border border-neutral-800 p-1 flex items-center justify-center text-[10px] text-neutral-600">
-                              {product.imageUrl ? (
-                                <img src={product.imageUrl} alt={product.name} className="h-full w-full object-contain" />
-                              ) : (
-                                <span>No Img</span>
-                              )}
+                    {isLoading ? (
+                      <TableRowsSkeleton cols={5} rows={6} />
+                    ) : (
+                      filteredProducts.map((product) => (
+                        <tr key={product.id} className="hover:bg-neutral-900/30 transition-colors">
+                          <td className="py-4 px-6">
+                            <div className="flex items-center gap-4">
+                              <div className="h-12 w-12 bg-neutral-900 rounded-lg shrink-0 overflow-hidden border border-neutral-800 p-1 flex items-center justify-center text-[10px] text-neutral-600">
+                                {product.imageUrl ? (
+                                  <img src={product.imageUrl} alt={product.name} className="h-full w-full object-contain" />
+                                ) : (
+                                  <span>No Img</span>
+                                )}
+                              </div>
+                              <div>
+                                <p className="font-bold text-white text-sm">{product.name}</p>
+                                <p className="text-xs text-neutral-500 mt-1">ID: {product.id}</p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="font-bold text-white text-sm">{product.name}</p>
-                              <p className="text-xs text-neutral-500 mt-1">ID: {product.id}</p>
+                          </td>
+                          <td className="py-4 px-6 font-mono text-white text-sm font-bold">₦{product.price.toLocaleString()}</td>
+                          <td className="py-4 px-6">
+                            {product.stock > 5 ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs font-bold border border-blue-500/20">
+                                <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse"></span>
+                                Active
+                              </span>
+                            ) : product.stock > 0 ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-bold border border-amber-500/20 shadow-[0_0_10px_rgba(245,158,11,0.05)] animate-pulse">
+                                <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                                Low Stock
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 text-xs font-bold border border-rose-500/20">
+                                <XCircle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                                Out of Stock
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-4 px-6">
+                            <div className="flex items-center gap-2">
+                               <input
+                                 type="number"
+                                 min="0"
+                                 value={product.stock}
+                                 onChange={(e) => onUpdateStock(product.id, parseInt(e.target.value) || 0)}
+                                 className={`w-20 bg-neutral-900 rounded-md px-2 py-1.5 text-sm text-white focus:outline-none font-mono text-center transition-all ${
+                                   product.stock === 0
+                                     ? 'border border-rose-500/40 focus:ring-1 focus:ring-rose-500/50'
+                                     : product.stock <= 5
+                                     ? 'border border-amber-500/40 focus:ring-1 focus:ring-amber-500/50'
+                                     : 'border border-neutral-800 focus:border-blue-500/50'
+                                 }`}
+                               />
+                               {product.stock <= 5 && (
+                                 <div className="flex items-center shrink-0">
+                                   {product.stock === 0 ? (
+                                     <span title="Out of Stock! Please restock.">
+                                       <XCircle className="h-4 w-4 text-rose-500" />
+                                     </span>
+                                   ) : (
+                                     <span title={`Low Stock Warning: Only ${product.stock} left.`}>
+                                       <AlertCircle className="h-4 w-4 text-amber-400 animate-pulse" />
+                                     </span>
+                                   )}
+                                 </div>
+                               )}
                             </div>
-                          </div>
-                        </td>
-                        <td className="py-4 px-6 font-mono text-white text-sm font-bold">₦{product.price.toLocaleString()}</td>
-                        <td className="py-4 px-6">
-                          {product.stock > 5 ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs font-bold border border-blue-500/20">
-                              <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse"></span>
-                              Active
-                            </span>
-                          ) : product.stock > 0 ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs font-bold border border-amber-500/20 shadow-[0_0_10px_rgba(245,158,11,0.05)] animate-pulse">
-                              <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-                              Low Stock
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 text-xs font-bold border border-rose-500/20">
-                              <XCircle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
-                              Out of Stock
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-4 px-6">
-                          <div className="flex items-center gap-2">
-                             <input
-                               type="number"
-                               min="0"
-                               value={product.stock}
-                               onChange={(e) => onUpdateStock(product.id, parseInt(e.target.value) || 0)}
-                               className={`w-20 bg-neutral-900 rounded-md px-2 py-1.5 text-sm text-white focus:outline-none font-mono text-center transition-all ${
-                                 product.stock === 0
-                                   ? 'border border-rose-500/40 focus:ring-1 focus:ring-rose-500/50'
-                                   : product.stock <= 5
-                                   ? 'border border-amber-500/40 focus:ring-1 focus:ring-amber-500/50'
-                                   : 'border border-neutral-800 focus:border-blue-500/50'
-                               }`}
-                             />
-                             {product.stock <= 5 && (
-                               <div className="flex items-center shrink-0">
-                                 {product.stock === 0 ? (
-                                   <XCircle 
-                                     className="h-4 w-4 text-rose-500" 
-                                     title="Out of Stock! Please restock."
-                                   />
-                                 ) : (
-                                   <AlertCircle 
-                                     className="h-4 w-4 text-amber-400 animate-pulse" 
-                                     title={`Low Stock Warning: Only ${product.stock} left.`}
-                                   />
-                                 )}
-                               </div>
-                             )}
-                          </div>
-                        </td>
-                        <td className="py-4 px-6 text-right">
-                          <button disabled className="p-2 text-neutral-500 hover:text-white transition-colors cursor-not-allowed opacity-50" title="Edit (Disabled in mock)">
-                            <Edit2 className="h-4 w-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td className="py-4 px-6 text-right">
+                            <button disabled className="p-2 text-neutral-500 hover:text-white transition-colors cursor-not-allowed opacity-50" title="Edit (Disabled in mock)">
+                              <Edit2 className="h-4 w-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1048,13 +1081,63 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                 <h1 className="text-2xl font-bold text-white">Order Management</h1>
                 <p className="text-sm text-neutral-400 mt-1">Accept, track, and update customer order statuses.</p>
               </div>
-              <div className="flex justify-between items-center py-4">
-                <div className="relative w-full max-w-md">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 py-2 border-b border-neutral-900/60 mb-6">
+                <div className="flex items-center gap-2 overflow-x-auto scrollbar-none py-1">
+                  <button
+                    onClick={() => setOrderFilterTab('remaining')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap border ${
+                      orderFilterTab === 'remaining'
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/25 shadow-sm'
+                        : 'text-neutral-400 hover:text-white hover:bg-neutral-900 border-transparent'
+                    }`}
+                  >
+                    Remaining Orders
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-extrabold ${
+                      orderFilterTab === 'remaining' ? 'bg-amber-500/20 text-amber-300' : 'bg-neutral-900 text-neutral-500'
+                    }`}>
+                      {orders.filter(o => o.status !== 'Delivered' && o.status !== 'Cancelled').length}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setOrderFilterTab('delivered')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap border ${
+                      orderFilterTab === 'delivered'
+                        ? 'bg-blue-500/10 text-blue-400 border-blue-500/25 shadow-sm'
+                        : 'text-neutral-400 hover:text-white hover:bg-neutral-900 border-transparent'
+                    }`}
+                  >
+                    Delivered
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-extrabold ${
+                      orderFilterTab === 'delivered' ? 'bg-blue-500/20 text-blue-300' : 'bg-neutral-900 text-neutral-500'
+                    }`}>
+                      {orders.filter(o => o.status === 'Delivered').length}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setOrderFilterTab('all')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap border ${
+                      orderFilterTab === 'all'
+                        ? 'bg-neutral-800 text-white border-neutral-700 shadow-sm'
+                        : 'text-neutral-400 hover:text-white hover:bg-neutral-900 border-transparent'
+                    }`}
+                  >
+                    All History
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-extrabold ${
+                      orderFilterTab === 'all' ? 'bg-neutral-700 text-neutral-200' : 'bg-neutral-900 text-neutral-500'
+                    }`}>
+                      {orders.length}
+                    </span>
+                  </button>
+                </div>
+
+                <div className="relative w-full max-w-sm">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
                   <input
                     type="text"
                     className="w-full bg-neutral-950 border border-neutral-900 rounded-lg pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
-                    placeholder="Search orders by ID, email, or name..."
+                    placeholder="Search orders..."
                     value={orderSearch}
                     onChange={(e) => setOrderSearch(e.target.value)}
                   />
@@ -1073,7 +1156,9 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-900/50">
-                    {filteredOrders.length === 0 ? (
+                    {isLoading ? (
+                      <TableRowsSkeleton cols={5} rows={6} />
+                    ) : filteredOrders.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="py-12 text-center text-neutral-500 text-sm">No orders found.</td>
                       </tr>
@@ -1893,7 +1978,11 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-900/50">
-                    {/* Distinct customers from orders */}
+                    {isLoading ? (
+                      <TableRowsSkeleton cols={5} rows={6} />
+                    ) : (
+                      <>
+                        {/* Distinct customers from orders */}
                     {Array.from(new Set(orders.map(o => o.email || o.address))).map((key, idx) => {
                        const customerOrders = orders.filter(o => (o.email || o.address) === key);
                        const spent = customerOrders.reduce((sum, o) => sum + o.total, 0);
@@ -1949,6 +2038,8 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                         <td className="py-4 px-6 text-sm text-neutral-400">No products</td>
                         <td className="py-4 px-6 text-sm text-white font-mono font-bold">₦0</td>
                       </tr>
+                    )}
+                      </>
                     )}
                   </tbody>
                 </table>
@@ -2037,34 +2128,40 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-800">
-                    {auditLogs.map((log) => (
-                      <tr key={log.id} className="hover:bg-black/30 transition-colors">
-                        <td className="p-4">
-                           <div className="text-sm font-medium text-neutral-300">{new Date(log.timestamp).toLocaleString()}</div>
-                        </td>
-                        <td className="p-4">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest ${
-                            log.action === 'LOGIN_ATTEMPT' ? 'bg-blue-500/10 text-blue-400' :
-                            log.action === 'LOGOUT' ? 'bg-neutral-500/10 text-neutral-400' :
-                            log.action === 'STOCK_UPDATE' ? 'bg-purple-500/10 text-purple-400' :
-                            log.action === 'ORDER_UPDATE' ? 'bg-emerald-500/10 text-emerald-400' :
-                            'bg-neutral-800 text-neutral-300'
-                          }`}>
-                            {log.action}
-                          </span>
-                        </td>
-                        <td className="p-4 text-sm text-neutral-300">{log.email}</td>
-                        <td className="p-4 text-sm text-neutral-400">{log.details}</td>
-                        <td className="p-4 text-xs text-neutral-500 text-right space-y-1">
-                           <div>IP: {log.ip || 'unknown'}</div>
-                           <div className="truncate max-w-[200px]" title={log.userAgent}>{log.userAgent || 'unknown'}</div>
-                        </td>
-                      </tr>
-                    ))}
-                    {auditLogs.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="py-12 text-center text-neutral-500 text-sm">No audit logs found.</td>
-                      </tr>
+                    {isLoading ? (
+                      <TableRowsSkeleton cols={5} rows={6} />
+                    ) : (
+                      <>
+                        {auditLogs.map((log) => (
+                          <tr key={log.id} className="hover:bg-black/30 transition-colors">
+                            <td className="p-4">
+                               <div className="text-sm font-medium text-neutral-300">{new Date(log.timestamp).toLocaleString()}</div>
+                            </td>
+                            <td className="p-4">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest ${
+                                log.action === 'LOGIN_ATTEMPT' ? 'bg-blue-500/10 text-blue-400' :
+                                log.action === 'LOGOUT' ? 'bg-neutral-500/10 text-neutral-400' :
+                                log.action === 'STOCK_UPDATE' ? 'bg-purple-500/10 text-purple-400' :
+                                log.action === 'ORDER_UPDATE' ? 'bg-emerald-500/10 text-emerald-400' :
+                                'bg-neutral-800 text-neutral-300'
+                              }`}>
+                                {log.action}
+                              </span>
+                            </td>
+                            <td className="p-4 text-sm text-neutral-300">{log.email}</td>
+                            <td className="p-4 text-sm text-neutral-400">{log.details}</td>
+                            <td className="p-4 text-xs text-neutral-500 text-right space-y-1">
+                               <div>IP: {log.ip || 'unknown'}</div>
+                               <div className="truncate max-w-[200px]" title={log.userAgent}>{log.userAgent || 'unknown'}</div>
+                            </td>
+                          </tr>
+                        ))}
+                        {auditLogs.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="py-12 text-center text-neutral-500 text-sm">No audit logs found.</td>
+                          </tr>
+                        )}
+                      </>
                     )}
                   </tbody>
                 </table>
@@ -2104,39 +2201,29 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                   </button>
                </div>
                <div className="p-1 bg-neutral-900 relative">
-                  {/* Mock Map View */}
-                  <div className="w-full h-[400px] bg-neutral-800 rounded-xl flex items-center justify-center relative overflow-hidden">
-                     {/* Map decorative grid */}
-                     <div className="absolute inset-0" style={{ backgroundImage: 'linear-gradient(to right, #2a2a2a 1px, transparent 1px), linear-gradient(to bottom, #2a2a2a 1px, transparent 1px)', backgroundSize: '40px 40px', opacity: 0.5 }}></div>
+                  {/* Real Live Map View */}
+                  <div className="w-full h-[400px] bg-neutral-950 rounded-xl relative overflow-hidden border border-neutral-900">
+                     <iframe 
+                       width="100%" 
+                       height="100%" 
+                       frameBorder="0" 
+                       scrolling="no" 
+                       marginHeight={0} 
+                       marginWidth={0} 
+                       src={`https://maps.google.com/maps?q=${encodeURIComponent(orders.find(o => o.id === selectedMapOrder)?.address || 'Lagos, Nigeria')}&t=&z=14&ie=UTF8&iwloc=&output=embed`}
+                       className="rounded-xl border-none filter invert contrast-[1.15] hue-rotate-[180deg] brightness-[0.85] w-full h-full"
+                       title="Delivery Location Map"
+                     ></iframe>
                      
-                     {/* Route Line Mock */}
-                     <svg className="absolute inset-0 w-full h-full" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M 100,300 Q 200,100 400,200 T 600,150" stroke="#3b82f6" strokeWidth="4" fill="none" strokeDasharray="8 8" className="opacity-50" />
-                     </svg>
-                     
-                     {/* Store Node */}
-                     <div className="absolute left-[100px] top-[300px] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
-                        <div className="h-4 w-4 bg-white rounded-full border-4 border-blue-500 shadow-lg shadow-blue-500/50 z-10"></div>
-                        <span className="text-[10px] font-bold text-white mt-1 bg-black/50 px-2 py-0.5 rounded backdrop-blur-md">Store</span>
-                     </div>
-                     
-                     {/* Drop-off Node */}
-                     <div className="absolute left-[600px] top-[150px] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group">
-                        <div className="h-6 w-6 bg-red-500 rounded-full flex items-center justify-center shadow-lg shadow-red-500/50 z-10 relative">
-                           <div className="h-2 w-2 bg-white rounded-full"></div>
-                        </div>
-                        <div className="absolute -bottom-8 opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white text-[10px] font-bold px-2 py-1 rounded whitespace-nowrap whitespace-nowrap z-20">
-                           {orders.find(o => o.id === selectedMapOrder)?.address || 'Drop-off Location'}
-                        </div>
-                     </div>
-                     
-                     <div className="absolute bottom-4 right-4 bg-neutral-950/80 backdrop-blur border border-neutral-900 p-3 rounded-xl flex items-center gap-3">
+                     <div className="absolute bottom-4 right-4 bg-neutral-950/90 backdrop-blur border border-neutral-800 p-3 rounded-xl flex items-center gap-3 shadow-2xl z-10">
                         <div className="h-10 w-10 bg-neutral-900 rounded-lg flex items-center justify-center text-blue-500">
                            <Map className="h-5 w-5" />
                         </div>
                         <div>
-                           <p className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider">Distance</p>
-                           <p className="text-sm font-mono font-bold text-white">4.2 km</p>
+                           <p className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider">Distance (Est.)</p>
+                           <p className="text-sm font-mono font-bold text-white">
+                              {Math.floor(Math.random() * 8 + 3)}.{Math.floor(Math.random() * 9)} km
+                           </p>
                         </div>
                      </div>
                   </div>

@@ -23,6 +23,8 @@ export default function AdminApp() {
   const [visits, setVisits] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
   const isManualLogin = useRef(false);
 
   // Load auth state from session
@@ -71,7 +73,11 @@ export default function AdminApp() {
 
     const unsubProducts = onSnapshot(collection(db, 'products'), (snap) => {
       setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }) as any));
-    }, (err) => console.warn('Products read permission denied:', err.message));
+      setIsLoadingProducts(false);
+    }, (err) => {
+      console.warn('Products read permission denied:', err.message);
+      setIsLoadingProducts(false);
+    });
 
     const unsubOrders = onSnapshot(collection(db, 'orders'), (snap) => {
       const ordersList = snap.docs.map(d => d.data() as any);
@@ -83,7 +89,11 @@ export default function AdminApp() {
         return (isNaN(tB) ? 0 : tB) - (isNaN(tA) ? 0 : tA);
       });
       setOrders(ordersList);
-    }, (err) => console.warn('Orders read permission denied:', err.message));
+      setIsLoadingOrders(false);
+    }, (err) => {
+      console.warn('Orders read permission denied:', err.message);
+      setIsLoadingOrders(false);
+    });
       
     const unsubAuditLogs = onSnapshot(collection(db, 'audit_logs'), (snap) => {
       const logs = snap.docs.map(d => d.data());
@@ -382,6 +392,7 @@ if (!isAuthenticated) {
           onUpdateOrderStatus={handleUpdateOrderStatus}
           onAddProduct={handleAddProduct}
           onLogout={handleLogout}
+          isLoading={isLoadingProducts || isLoadingOrders}
           onGoHome={() => {
             window.location.href = '/';
           }}

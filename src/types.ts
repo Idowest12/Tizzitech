@@ -31,7 +31,7 @@ export interface CartItem extends Product {
   quantity: number;
 }
 
-export type OrderStatus = 'Pending' | 'Confirmed' | 'Processing' | 'Accepted' | 'Shipped' | 'Picked Up' | 'In Transit' | 'Delivered';
+export type OrderStatus = 'Pending' | 'Confirmed' | 'Processing' | 'Accepted' | 'Shipped' | 'Picked Up' | 'In Transit' | 'Delivered' | 'Cancelled';
 
 export interface OrderEmailEvent {
   date: Date;

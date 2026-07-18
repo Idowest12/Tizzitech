@@ -5,6 +5,7 @@ import { Menu, ChevronDown, SlidersHorizontal, Lock } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "./components/Header";
 import { ProductCard } from "./components/ProductCard";
+import { ProductCardSkeleton } from "./components/Skeleton";
 import { Filters } from "./components/Filters";
 import { CartDrawer } from "./components/CartDrawer";
 import { ProductOverviewPane } from "./components/ProductOverviewPane";
@@ -69,6 +70,7 @@ export default function App() {
   };
 
   const [products, setProducts] = useState<Product[]>(initialProducts);
+  const [loadingProducts, setLoadingProducts] = useState(true);
 
   useEffect(() => {
     localStorage.setItem('tizzitech_wishlist', JSON.stringify(wishlist));
@@ -114,6 +116,7 @@ export default function App() {
     | "privacy"
     | "terms"
     | "refund"
+    | "admin"
   >("store");
   const [searchQuery, setSearchQuery] = useState("");
   const [resetToken, setResetToken] = useState<string | null>(null);
@@ -123,11 +126,43 @@ export default function App() {
     if (!localStorage.getItem('tizzitech_visitor_id')) {
       localStorage.setItem('tizzitech_visitor_id', visitorId);
     }
-    fetch('/api/analytics/visit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ visitorId, isRegistered: !!user })
-    }).catch(() => {});
+
+    const logVisit = async () => {
+      let clientGeo = null;
+      try {
+        const cached = localStorage.getItem('tizzitech_client_geo');
+        if (cached) {
+          clientGeo = JSON.parse(cached);
+        } else {
+          // Fetch from a highly reliable, HTTPS-friendly IP geolocation API with a tight 1.5s timeout
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 1500);
+          const res = await fetch('https://ipapi.co/json/', { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.country_code) {
+              clientGeo = {
+                country: data.country_code.toUpperCase(),
+                region: data.region || 'Unknown',
+                city: data.city || 'Unknown'
+              };
+              localStorage.setItem('tizzitech_client_geo', JSON.stringify(clientGeo));
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Client-side geo-IP lookup skipped/failed:', e);
+      }
+
+      fetch('/api/analytics/visit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visitorId, isRegistered: !!user, clientGeo })
+      }).catch(() => {});
+    };
+
+    logVisit();
   }, [user]);
   useEffect(() => {
     // Parse URL for reset token
@@ -146,26 +181,39 @@ export default function App() {
   const [pendingCheckout, setPendingCheckout] = useState(false);
 
   useEffect(() => {
-    // Fetch products from backend on mount (now connected to Supabase)
+    // Fetch products and settings from cached backend endpoints to reduce Firestore reads and scale seamlessly
     const loadProducts = async () => {
+      setLoadingProducts(true);
+      // 1. Fetch Settings from cached backend endpoint
       try {
-        // Fetch Settings
-        const settingsSnap = await getDoc(doc(db, 'settings', 'global'));
-        if (settingsSnap.exists()) {
-          const s = settingsSnap.data();
+        const res = await fetch('/api/settings');
+        if (res.ok) {
+          const s = await res.json();
           if (s.brands) setBrandsList(s.brands);
           if (s.categories) setCategoriesList(s.categories);
           if (s.deliveryZones) setDeliveryZones(s.deliveryZones);
         }
-        
-        // Fetch products from firestore directly
-        const prodSnap = await getDocs(collection(db, 'products'));
-        const data = prodSnap.docs.map(d => d.data());
-        if (data.length > 0) {
-          setProducts(data as Product[]);
+      } catch (err) {
+        console.warn("Could not load latest global settings from cached backend:", err);
+      }
+      
+      // 2. Fetch Products from cached backend endpoint
+      try {
+        const res = await fetch('/api/products');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.length > 0) {
+            setProducts(data as Product[]);
+          }
         }
       } catch (err) {
-        console.error("Error fetching", err);
+        console.warn("Could not load latest products from cached backend:", err);
+        // Products are already initialized with initialProducts, so the app will load successfully
+      } finally {
+        // Add a small delay for a smooth perceived experience
+        setTimeout(() => {
+          setLoadingProducts(false);
+        }, 800);
       }
     };
     loadProducts();
@@ -747,6 +795,7 @@ export default function App() {
                       initial="hidden"
                       animate="show"
                       key={
+                        loadingProducts ? "loading" :
                         selectedCategory +
                         selectedCondition +
                         selectedBrands.join("") +
@@ -756,24 +805,32 @@ export default function App() {
                       }
                       className="grid grid-cols-1 gap-x-6 gap-y-12 sm:grid-cols-2 lg:grid-cols-3"
                     >
-                      {filteredProducts.map((product) => (
-                        <motion.div
-                          key={product.id}
-                          variants={itemVariants}
-                          layout
-                        >
-                          <ProductCard
-                            product={product}
-                            onAddToCart={addToCart}
-                            onViewProduct={(p) => {
-                              setSelectedProduct(p);
-                              setView("product-details");
-                            }}
-                            isWishlisted={wishlist.includes(product.id)}
-                            onToggleWishlist={handleToggleWishlist}
-                          />
-                        </motion.div>
-                      ))}
+                      {loadingProducts ? (
+                        Array.from({ length: 6 }).map((_, idx) => (
+                          <motion.div key={idx} variants={itemVariants}>
+                            <ProductCardSkeleton />
+                          </motion.div>
+                        ))
+                      ) : (
+                        filteredProducts.map((product) => (
+                          <motion.div
+                            key={product.id}
+                            variants={itemVariants}
+                            layout
+                          >
+                            <ProductCard
+                              product={product}
+                              onAddToCart={addToCart}
+                              onViewProduct={(p) => {
+                                setSelectedProduct(p);
+                                setView("product-details");
+                              }}
+                              isWishlisted={wishlist.includes(product.id)}
+                              onToggleWishlist={handleToggleWishlist}
+                            />
+                          </motion.div>
+                        ))
+                      )}
                     </motion.div>
                   </>
                 )}
