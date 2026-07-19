@@ -15,7 +15,7 @@ code = code.replace(
 };`
 );
 
-// Remove the AI studio specific database ID logic
+// Remove the specific database ID logic
 code = code.replace(
   `export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);`,
   `export const db = getFirestore(app);`
