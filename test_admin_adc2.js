@@ -1,9 +1,7 @@
 import admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 
-admin.initializeApp({
-  projectId: "tizzitech-ecommerce"
-});
+admin.initializeApp();
 const db = getFirestore();
 async function run() {
   try {

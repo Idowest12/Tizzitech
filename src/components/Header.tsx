@@ -32,6 +32,7 @@ interface HeaderProps {
   onGoHome: () => void;
   onSearchStart?: () => void;
   onOpenTechOfTheDay: () => void;
+  onOpenLaunchWaitlist?: () => void;
   currentView?: string;
 }
 
@@ -43,6 +44,7 @@ export function Header({
   onOpenAuth,
   onOpenAbout,
   onOpenTechOfTheDay,
+  onOpenLaunchWaitlist,
   onSelectCategory,
   selectedCategory,
   searchQuery,

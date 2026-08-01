@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import { Bell, Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, AlertCircle, XCircle, BarChart3, FileText, Map, Star, Sliders, MapPin, DollarSign, Eye } from 'lucide-react';
 import { Product, Order } from '../types';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, AreaChart } from 'recharts';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db, auth, logAuditActivity } from '../firebase';
 import { NewsletterAdmin } from './NewsletterAdmin';
 import { AdminManager } from './AdminManager';
@@ -20,11 +20,31 @@ interface AdminDashboardProps {
   onGoHome: () => void;
   onLogout: () => void;
   isLoading?: boolean;
+  coupons?: any[];
+  onAddCoupon?: (newCoupon: any) => Promise<void>;
+  onToggleCoupon?: (code: string, newStatus: string) => Promise<void>;
+  onDeleteCoupon?: (code: string) => Promise<void>;
 }
 
 type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'newsletter' | 'admins' | 'audit-logs';
 
-export function AdminDashboard({ products, orders, visits = [], allUsers = [], auditLogs = [], onUpdateStock, onUpdateOrderStatus, onAddProduct, onGoHome, onLogout, isLoading = false }: AdminDashboardProps) {
+export function AdminDashboard({ 
+  products, 
+  orders, 
+  visits = [], 
+  allUsers = [], 
+  auditLogs = [], 
+  onUpdateStock, 
+  onUpdateOrderStatus, 
+  onAddProduct, 
+  onGoHome, 
+  onLogout, 
+  isLoading = false,
+  coupons = [],
+  onAddCoupon,
+  onToggleCoupon,
+  onDeleteCoupon
+}: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [previousOrderCount, setPreviousOrderCount] = useState<number | null>(null);
   const [newOrderNotification, setNewOrderNotification] = useState<string | null>(null);
@@ -96,7 +116,7 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
   const [selectedMapOrder, setSelectedMapOrder] = useState<string | null>(null);
   const [selectedOrderDetails, setSelectedOrderDetails] = useState<Order | null>(null);
   const [orderModalTab, setOrderModalTab] = useState<'details' | 'email'>('details');
-  const [orderFilterTab, setOrderFilterTab] = useState<'remaining' | 'delivered' | 'all'>('remaining');
+  const [orderFilterTab, setOrderFilterTab] = useState<'remaining' | 'delivered' | 'cancelled' | 'all'>('remaining');
 
   // New product form state
   const [showAddProduct, setShowAddProduct] = useState(false);
@@ -104,6 +124,19 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
   const [promptValue, setPromptValue] = useState('');
   const [newProductForm, setNewProductForm] = useState<Partial<Product>>({
     name: '', brand: '', category: 'Laptops', price: 0, costPrice: 0, condition: 'New', stock: 0, imageUrl: '', description: ''
+  });
+
+  // Coupon management states
+  const [showAddCouponModal, setShowAddCouponModal] = useState(false);
+  const [newCouponForm, setNewCouponForm] = useState({
+    code: '',
+    type: 'Percentage',
+    value: 0,
+    minPurchase: 0,
+    status: 'Active',
+    expiryDate: '',
+    description: '',
+    usesCount: 0
   });
   const analyticsStats = useMemo(() => {
     const total = visits.length;
@@ -234,6 +267,68 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
 
   const generateReceipt = (order: Order) => {
     setReceiptOrder(order);
+  };
+
+  const handleToggleCouponStatus = async (code: string, currentStatus: string) => {
+    if (onToggleCoupon) {
+      await onToggleCoupon(code, currentStatus === 'Active' ? 'Paused' : 'Active');
+    } else {
+      const nextStatus = currentStatus === 'Active' ? 'Paused' : 'Active';
+      try {
+        await updateDoc(doc(db, 'coupons', code), { status: nextStatus });
+        logAuditActivity('COUPON_STATUS_CHANGE', `Toggled coupon ${code} to ${nextStatus}`, auth.currentUser?.email || 'admin');
+      } catch(err) {
+        console.error("Error toggling coupon status:", err);
+      }
+    }
+  };
+
+  const handleDeleteCouponCode = async (code: string) => {
+    if (!confirm(`Are you sure you want to permanently delete coupon ${code}?`)) return;
+    if (onDeleteCoupon) {
+      await onDeleteCoupon(code);
+    } else {
+      try {
+        await deleteDoc(doc(db, 'coupons', code));
+        logAuditActivity('COUPON_DELETE', `Deleted coupon ${code}`, auth.currentUser?.email || 'admin');
+      } catch(err) {
+        console.error("Error deleting coupon:", err);
+      }
+    }
+  };
+
+  const handleCreateCouponSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCouponForm.code) return;
+    const cleanCode = newCouponForm.code.toUpperCase().replace(/\s+/g, '');
+    const couponData = {
+      ...newCouponForm,
+      code: cleanCode,
+      createdAt: Date.now()
+    };
+    try {
+      if (onAddCoupon) {
+        await onAddCoupon(couponData);
+      } else {
+        await setDoc(doc(db, 'coupons', cleanCode), couponData);
+        logAuditActivity('COUPON_CREATE', `Created discount coupon: ${cleanCode}`, auth.currentUser?.email || 'admin');
+      }
+      setShowAddCouponModal(false);
+      // Reset form
+      setNewCouponForm({
+        code: '',
+        type: 'Percentage',
+        value: 0,
+        minPurchase: 0,
+        status: 'Active',
+        expiryDate: '',
+        description: '',
+        usesCount: 0
+      });
+    } catch(err) {
+      console.error("Error creating coupon:", err);
+      alert("Failed to create coupon: " + (err instanceof Error ? err.message : String(err)));
+    }
   };
 
   // Delivery Zones state
@@ -403,6 +498,8 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
       return o.status !== 'Delivered' && o.status !== 'Cancelled';
     } else if (orderFilterTab === 'delivered') {
       return o.status === 'Delivered';
+    } else if (orderFilterTab === 'cancelled') {
+      return o.status === 'Cancelled';
     }
     return true; // 'all'
   });
@@ -1116,6 +1213,22 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                   </button>
 
                   <button
+                    onClick={() => setOrderFilterTab('cancelled')}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap border ${
+                      orderFilterTab === 'cancelled'
+                        ? 'bg-rose-500/10 text-rose-400 border-rose-500/25 shadow-sm'
+                        : 'text-neutral-400 hover:text-white hover:bg-neutral-900 border-transparent'
+                    }`}
+                  >
+                    Cancelled
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-extrabold ${
+                      orderFilterTab === 'cancelled' ? 'bg-rose-500/20 text-rose-300' : 'bg-neutral-900 text-neutral-500'
+                    }`}>
+                      {orders.filter(o => o.status === 'Cancelled').length}
+                    </span>
+                  </button>
+
+                  <button
                     onClick={() => setOrderFilterTab('all')}
                     className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap border ${
                       orderFilterTab === 'all'
@@ -1178,7 +1291,7 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                         </td>
                         <td className="py-4 px-6">
                           <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-bold border ${(order.status === 'Processing' || order.status === 'Accepted' || order.status === 'Pending') ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : order.status === 'Confirmed' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' : (order.status === 'Picked Up' || order.status === 'In Transit') ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : order.status === 'Delivered' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'}`}>
-                            {order.status}
+                            {order.status === 'Cancelled' ? `Cancelled ${(order as any).cancelledBy === 'client' ? '(By Customer)' : (order as any).cancelledBy === 'admin' ? '(By Admin)' : ''}` : order.status}
                           </span>
                         </td>
                         <td className="py-4 px-6 flex justify-end items-center gap-2">
@@ -1236,6 +1349,12 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                                  Mark Delivered
                               </button>
                            )}
+                           {order.status === 'Cancelled' && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-lg text-xs font-bold">
+                                 <XCircle className="h-3.5 w-3.5" />
+                                 Cancelled
+                              </span>
+                           )}
                         </td>
                       </tr>
                     ))}
@@ -1244,8 +1363,7 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
               </div>
             </div>
           )}
-
-          {/* DISCOUNTS / COUPONS TAB */}
+           {/* DISCOUNTS / COUPONS TAB */}
           {activeTab === 'discounts' && (
              <div className="animate-in fade-in space-y-6">
               <div className="flex justify-between items-center">
@@ -1253,8 +1371,14 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                   <h1 className="text-2xl font-bold text-white">Coupons</h1>
                   <p className="text-neutral-400 text-sm mt-1">Manage promotional discount codes.</p>
                 </div>
-                <button onClick={() => alert("Coupon creation requires backend support. Feature coming soon!")} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm tracking-wide flex items-center gap-2 transition-colors"><Plus className="h-4 w-4" /> Add Code</button>
+                <button 
+                  onClick={() => setShowAddCouponModal(true)} 
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm tracking-wide flex items-center gap-2 transition-colors"
+                >
+                  <Plus className="h-4 w-4" /> Add Coupon
+                </button>
               </div>
+
               <div className="bg-neutral-950 border border-neutral-900 rounded-2xl overflow-hidden shadow-sm">
                 <table className="w-full text-left">
                   <thead className="bg-neutral-900/50 border-b border-neutral-900">
@@ -1262,40 +1386,176 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Code</th>
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Type</th>
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Value</th>
+                      <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Min. Purchase</th>
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Uses</th>
-                      <th className="py-4 px-6 text-right text-xs font-bold text-neutral-400 uppercase tracking-widest">Status</th>
+                      <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Expiry</th>
+                      <th className="py-4 px-6 text-right text-xs font-bold text-neutral-400 uppercase tracking-widest">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-900/50 bg-black">
-                     <tr className="hover:bg-neutral-900/30 transition-colors">
-                       <td className="py-4 px-6 text-sm font-bold text-white font-mono uppercase">WELCOME10</td>
-                       <td className="py-4 px-6 text-sm text-neutral-400">Percentage</td>
-                       <td className="py-4 px-6 text-sm font-bold text-white">10% Off</td>
-                       <td className="py-4 px-6 text-sm text-neutral-400 font-mono">142 used</td>
-                       <td className="py-4 px-6 text-right">
-                         <span className="inline-flex px-2 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[10px] uppercase font-bold tracking-wider">Active</span>
-                       </td>
-                     </tr>
-                     <tr className="hover:bg-neutral-900/30 transition-colors">
-                       <td className="py-4 px-6 text-sm font-bold text-white font-mono uppercase">FREESHIP24</td>
-                       <td className="py-4 px-6 text-sm text-neutral-400">Shipping</td>
-                       <td className="py-4 px-6 text-sm font-bold text-white">Free Shipping</td>
-                       <td className="py-4 px-6 text-sm text-neutral-400 font-mono">31 used</td>
-                       <td className="py-4 px-6 text-right">
-                         <span className="inline-flex px-2 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded text-[10px] uppercase font-bold tracking-wider">Paused</span>
-                       </td>
-                     </tr>
-                     <tr className="hover:bg-neutral-900/30 transition-colors">
-                       <td className="py-4 px-6 text-sm font-bold text-white font-mono uppercase">BLACKFRIDAY</td>
-                       <td className="py-4 px-6 text-sm text-neutral-400">Fixed Cart</td>
-                       <td className="py-4 px-6 text-sm font-bold text-white">₦50,000 Off</td>
-                       <td className="py-4 px-6 text-sm text-neutral-400 font-mono">928 used</td>
-                       <td className="py-4 px-6 text-right">
-                         <span className="inline-flex px-2 py-1 bg-neutral-500/10 text-neutral-400 border border-neutral-500/20 rounded text-[10px] uppercase font-bold tracking-wider">Expired</span>
-                       </td>
-                     </tr>
+                    {coupons.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-12 text-center text-neutral-500 text-sm">
+                          <Tags className="h-8 w-8 mx-auto mb-3 text-neutral-600" />
+                          No coupons found. Click "Add Coupon" to create your first promotional code!
+                        </td>
+                      </tr>
+                    ) : (
+                      coupons.map((coupon: any) => {
+                        const isExpired = coupon.expiryDate ? new Date(coupon.expiryDate).getTime() < Date.now() : false;
+                        return (
+                          <tr key={coupon.code || coupon.id} className="hover:bg-neutral-900/30 transition-colors">
+                            <td className="py-4 px-6 text-sm font-bold text-white font-mono uppercase">
+                              {coupon.code}
+                              {coupon.description && (
+                                <span className="block text-[10px] text-neutral-500 font-normal font-sans mt-0.5">{coupon.description}</span>
+                              )}
+                            </td>
+                            <td className="py-4 px-6 text-sm text-neutral-400">{coupon.type}</td>
+                            <td className="py-4 px-6 text-sm font-bold text-white">
+                              {coupon.type === 'Percentage' ? `${coupon.value}% Off` : coupon.type === 'Fixed' ? `₦${Number(coupon.value).toLocaleString()} Off` : 'Free Shipping'}
+                            </td>
+                            <td className="py-4 px-6 text-sm text-neutral-400 font-mono">
+                              ₦{Number(coupon.minPurchase || 0).toLocaleString()}
+                            </td>
+                            <td className="py-4 px-6 text-sm text-neutral-400 font-mono">{coupon.usesCount || 0} uses</td>
+                            <td className="py-4 px-6 text-sm">
+                              {coupon.expiryDate ? (
+                                <span className={isExpired ? "text-rose-500 font-medium" : "text-neutral-400"}>
+                                  {new Date(coupon.expiryDate).toLocaleDateString()} {isExpired && "(Expired)"}
+                                </span>
+                              ) : (
+                                <span className="text-neutral-500">Never</span>
+                              )}
+                            </td>
+                            <td className="py-4 px-6 text-right space-x-2">
+                              <button 
+                                onClick={() => handleToggleCouponStatus(coupon.code || coupon.id, coupon.status)}
+                                className={`px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded border transition-colors ${
+                                  coupon.status === 'Active' && !isExpired
+                                    ? 'bg-blue-500/10 text-blue-400 border-blue-500/25 hover:bg-blue-500/20'
+                                    : 'bg-neutral-500/10 text-neutral-400 border-neutral-500/20 hover:bg-neutral-500/20'
+                                }`}
+                              >
+                                {isExpired ? 'Expired' : coupon.status === 'Active' ? 'Active' : 'Paused'}
+                              </button>
+                              <button 
+                                onClick={() => handleDeleteCouponCode(coupon.code || coupon.id)}
+                                className="p-1 text-neutral-500 hover:text-rose-500 rounded transition-colors"
+                                title="Delete Coupon"
+                              >
+                                <Trash2 className="h-4 w-4 inline" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'discounts' && showAddCouponModal && (
+            <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+              <div className="bg-neutral-950 border border-neutral-900 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
+                <button onClick={() => setShowAddCouponModal(false)} className="absolute top-6 right-6 text-neutral-400 hover:text-white transition-colors">
+                  <XCircle className="h-6 w-6" />
+                </button>
+                <h2 className="text-xl font-bold text-white mb-6">Create Discount Coupon</h2>
+                
+                <form onSubmit={handleCreateCouponSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1.5">Coupon Code</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="e.g. DISCOUNT20" 
+                      value={newCouponForm.code} 
+                      onChange={e => setNewCouponForm({...newCouponForm, code: e.target.value.toUpperCase()})} 
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded px-3.5 py-2.5 text-white font-mono uppercase focus:outline-none focus:border-blue-500 transition-colors" 
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1.5">Discount Type</label>
+                      <select 
+                        value={newCouponForm.type} 
+                        onChange={e => setNewCouponForm({...newCouponForm, type: e.target.value})} 
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded px-3.5 py-2.5 text-white focus:outline-none focus:border-blue-500 transition-colors"
+                      >
+                        <option value="Percentage">Percentage (%)</option>
+                        <option value="Fixed">Fixed Amount (₦)</option>
+                        <option value="Shipping">Free Shipping</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1.5">
+                        {newCouponForm.type === 'Percentage' ? 'Percentage (%)' : newCouponForm.type === 'Fixed' ? 'Amount (₦)' : 'N/A'}
+                      </label>
+                      <input 
+                        type="number" 
+                        disabled={newCouponForm.type === 'Shipping'}
+                        required={newCouponForm.type !== 'Shipping'}
+                        value={newCouponForm.type === 'Shipping' ? 0 : newCouponForm.value} 
+                        onChange={e => setNewCouponForm({...newCouponForm, value: Number(e.target.value)})} 
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded px-3.5 py-2.5 text-white font-mono disabled:opacity-40 focus:outline-none focus:border-blue-500 transition-colors" 
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1.5">Min. Purchase (₦)</label>
+                      <input 
+                        type="number" 
+                        required
+                        value={newCouponForm.minPurchase} 
+                        onChange={e => setNewCouponForm({...newCouponForm, minPurchase: Number(e.target.value)})} 
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded px-3.5 py-2.5 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors" 
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1.5">Expiry Date</label>
+                      <input 
+                        type="date" 
+                        value={newCouponForm.expiryDate} 
+                        onChange={e => setNewCouponForm({...newCouponForm, expiryDate: e.target.value})} 
+                        className="w-full bg-neutral-900 border border-neutral-800 rounded px-3.5 py-2.5 text-white focus:outline-none focus:border-blue-500 transition-colors text-sm" 
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1.5">Description</label>
+                    <textarea 
+                      placeholder="e.g. 15% off Easter special promo" 
+                      value={newCouponForm.description} 
+                      onChange={e => setNewCouponForm({...newCouponForm, description: e.target.value})} 
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500 transition-colors h-20" 
+                    />
+                  </div>
+
+                  <div className="pt-4 flex gap-3">
+                    <button 
+                      type="button" 
+                      onClick={() => setShowAddCouponModal(false)}
+                      className="flex-1 bg-neutral-900 hover:bg-neutral-800 text-white border border-neutral-800 font-bold py-3 rounded-lg text-xs uppercase tracking-wider transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      type="submit" 
+                      className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg text-xs uppercase tracking-wider transition-colors shadow-lg shadow-blue-500/10"
+                    >
+                      Create Coupon
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
           )}
@@ -2290,6 +2550,25 @@ export function AdminDashboard({ products, orders, visits = [], allUsers = [], a
                       </span>
                     </div>
                   </div>
+
+                  {selectedOrderDetails.status === 'Cancelled' && (
+                    <div className="bg-rose-500/10 border border-rose-500/20 p-4 rounded-xl flex items-start gap-3">
+                      <XCircle className="h-5 w-5 text-rose-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-sm font-bold text-rose-400">
+                          Order Cancelled {(selectedOrderDetails as any).cancelledBy === 'client' ? '(By Customer)' : '(By Admin)'}
+                        </p>
+                        <p className="text-xs text-neutral-300 mt-1">
+                          {(selectedOrderDetails as any).cancellationReason || 'Order was cancelled prior to fulfillment.'}
+                        </p>
+                        {(selectedOrderDetails as any).cancelledAt && (
+                          <p className="text-[11px] text-neutral-500 mt-1">
+                            Cancelled on {new Date((selectedOrderDetails as any).cancelledAt).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   
                   <div>
                     <h4 className="text-white font-bold mb-3 border-b border-neutral-900 pb-2">Items Ordered</h4>

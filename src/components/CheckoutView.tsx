@@ -6,6 +6,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { usePaystackPayment } from 'react-paystack';
 import { PaystackService } from '../services/paystack';
 import { CartItem, Order } from '../types';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 interface CheckoutViewProps {
   cart: CartItem[];
@@ -40,6 +42,9 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
   const [step, setStep] = useState(1);
   const [cardDetails, setCardDetails] = useState({ number: '', expiry: '', cvv: '' });
   const [couponCode, setCouponCode] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<any | null>(null);
+  const [couponError, setCouponError] = useState('');
+  const [couponSuccess, setCouponSuccess] = useState('');
 
   const getDeliveryFee = (selectedLga: string) => {
     if (!selectedLga) return 0;
@@ -54,8 +59,68 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
     }
   };
 
-  const deliveryFee = getDeliveryFee(lga);
-  const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0) + deliveryFee;
+  const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  
+  const getDiscountAmount = () => {
+    if (!appliedCoupon) return 0;
+    if (appliedCoupon.type === 'Percentage') {
+      return Math.round(subtotal * (Number(appliedCoupon.value) / 100));
+    }
+    if (appliedCoupon.type === 'Fixed') {
+      return Number(appliedCoupon.value);
+    }
+    return 0; // Shipping discount handled on delivery fee
+  };
+
+  const discountAmount = getDiscountAmount();
+  const baseDeliveryFee = getDeliveryFee(lga);
+  const deliveryFee = (appliedCoupon?.type === 'Shipping') ? 0 : baseDeliveryFee;
+  const total = Math.max(0, subtotal + deliveryFee - discountAmount);
+
+  const handleApplyCoupon = async () => {
+    setCouponError('');
+    setCouponSuccess('');
+    if (!couponCode) return;
+    const cleanCode = couponCode.toUpperCase().replace(/\s+/g, '');
+    
+    try {
+      const couponSnap = await getDoc(doc(db, 'coupons', cleanCode));
+      if (!couponSnap.exists()) {
+        setCouponError('Invalid coupon code. Please try again.');
+        return;
+      }
+      
+      const couponData = couponSnap.data();
+      
+      if (couponData.status !== 'Active') {
+        setCouponError('This coupon is currently inactive.');
+        return;
+      }
+      
+      if (couponData.expiryDate && new Date(couponData.expiryDate).getTime() < Date.now()) {
+        setCouponError('This coupon has expired.');
+        return;
+      }
+      
+      if (subtotal < (couponData.minPurchase || 0)) {
+        setCouponError(`Minimum purchase of ₦${Number(couponData.minPurchase).toLocaleString()} required.`);
+        return;
+      }
+      
+      setAppliedCoupon(couponData);
+      setCouponSuccess(`Coupon "${cleanCode}" applied! (₦${(couponData.type === 'Percentage' ? Math.round(subtotal * (Number(couponData.value) / 100)) : couponData.type === 'Fixed' ? couponData.value : baseDeliveryFee).toLocaleString()} saved)`);
+    } catch(err) {
+      console.error(err);
+      setCouponError('An error occurred during verification.');
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponCode('');
+    setCouponSuccess('');
+    setCouponError('');
+  };
 
   const paystackConfig = {
     reference: `TZ_${new Date().getTime().toString()}`,
@@ -607,29 +672,76 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
                 <label className="flex items-center gap-2 text-[10px] font-bold tracking-widest text-neutral-400 uppercase mb-2">
                   <Tag className="w-3 h-3" /> Add Coupon Code
                 </label>
-                <div className="flex gap-2 mb-6">
-                  <input
-                    type="text"
-                    value={couponCode}
-                    onChange={(e) => setCouponCode(e.target.value)}
-                    placeholder="e.g. DISCOUNT20"
-                    className="flex-1 bg-black border border-neutral-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 transition-colors text-sm uppercase placeholder:normal-case font-mono"
-                  />
-                  <button type="button" className="bg-neutral-800 hover:bg-neutral-700 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-colors">
-                    Apply
-                  </button>
-                </div>
+                {!appliedCoupon ? (
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={couponCode}
+                        onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                        placeholder="e.g. DISCOUNT20"
+                        className="flex-1 bg-black border border-neutral-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 transition-colors text-sm uppercase placeholder:normal-case font-mono"
+                      />
+                      <button 
+                        type="button" 
+                        onClick={handleApplyCoupon}
+                        className="bg-neutral-800 hover:bg-neutral-700 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-colors"
+                      >
+                        Apply
+                      </button>
+                    </div>
+                    {couponError && (
+                      <p className="text-[11px] text-rose-500 flex items-center gap-1">
+                        <AlertCircle className="w-3.5 h-3.5" /> {couponError}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 px-4 py-2.5 rounded-lg text-emerald-400 text-xs">
+                      <span className="font-mono font-bold tracking-wide uppercase">{appliedCoupon.code}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold">{appliedCoupon.type === 'Percentage' ? `${appliedCoupon.value}% Off` : appliedCoupon.type === 'Fixed' ? `₦${appliedCoupon.value.toLocaleString()} Off` : 'Free Shipping'}</span>
+                        <button 
+                          type="button" 
+                          onClick={handleRemoveCoupon} 
+                          className="text-neutral-400 hover:text-white font-bold ml-1 transition-colors"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                    {couponSuccess && (
+                      <p className="text-[11px] text-emerald-500 font-medium">
+                        {couponSuccess}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-3.5 text-xs border-t border-neutral-900 pt-6">
                 <div className="flex justify-between text-neutral-400">
                   <span>Subtotal Invoice</span>
-                  <span className="text-white font-mono font-medium">₦{(total - deliveryFee).toLocaleString()}</span>
+                  <span className="text-white font-mono font-medium">₦{subtotal.toLocaleString()}</span>
                 </div>
+                
+                {discountAmount > 0 && (
+                  <div className="flex justify-between text-emerald-400 font-medium animate-in fade-in">
+                    <span>Discount Coupon</span>
+                    <span className="font-mono">-₦{discountAmount.toLocaleString()}</span>
+                  </div>
+                )}
+
                 <div className="flex justify-between text-neutral-400">
                   <span>Inland Shipping</span>
-                  {deliveryFee > 0 ? (
-                    <span className="text-white font-mono font-medium">₦{deliveryFee.toLocaleString()}</span>
+                  {appliedCoupon?.type === 'Shipping' ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-neutral-500 line-through font-mono">₦{baseDeliveryFee.toLocaleString()}</span>
+                      <span className="text-emerald-400 font-bold uppercase text-[10px] tracking-wider">Free Shipping</span>
+                    </div>
+                  ) : baseDeliveryFee > 0 ? (
+                    <span className="text-white font-mono font-medium">₦{baseDeliveryFee.toLocaleString()}</span>
                   ) : (
                     <span className="text-emerald-500 font-bold uppercase text-[10px] tracking-wider">{lga ? 'Standard Delivery' : 'Select LGA for Delivery Fee'}</span>
                   )}

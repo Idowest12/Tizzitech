@@ -6,7 +6,7 @@ import { auth } from './firebase';
 
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
 
-import { collection, getDocs, doc, updateDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, setDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType, logAuditActivity } from './firebase';
 
 
@@ -23,6 +23,7 @@ export default function AdminApp() {
   const [visits, setVisits] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [coupons, setCoupons] = useState<any[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
   const isManualLogin = useRef(false);
@@ -41,6 +42,9 @@ export default function AdminApp() {
             const valData = await valRes.json();
             
             if (valData.valid) {
+              if (valData.token) {
+                sessionStorage.setItem('tizzitech_admin_token', valData.token);
+              }
               setAdminEmail(user.email);
               logAuditActivity('LOGIN_ATTEMPT', 'Successful auto-login via valid session', user.email);
               setIsAuthenticated(true);
@@ -109,12 +113,17 @@ export default function AdminApp() {
       setUsers(snap.docs.map(d => d.data() as any));
     }, (err) => console.warn('Users read permission denied:', err.message));
 
+    const unsubCoupons = onSnapshot(collection(db, 'coupons'), (snap) => {
+      setCoupons(snap.docs.map(d => d.data() as any));
+    }, (err) => console.warn('Coupons read permission denied:', err.message));
+
     return () => {
       unsubProducts();
       unsubOrders();
       unsubAuditLogs();
       unsubVisits();
       unsubUsers();
+      unsubCoupons();
     };
   }, [isAuthenticated]);
 
@@ -172,6 +181,9 @@ export default function AdminApp() {
       });
       const data = await res.json();
       if (data.success) {
+        if (data.token) {
+          sessionStorage.setItem('tizzitech_admin_token', data.token);
+        }
         setIsAuthenticated(true);
       } else {
         setError(data.message || 'Invalid OTP');
@@ -246,8 +258,27 @@ const handleUpdateStock = async (id: string, newStock: number) => {
 
   const handleUpdateOrderStatus = async (id: string, newStatus: string) => {
     try {
-      await updateDoc(doc(db, 'orders', id), { status: newStatus });
+      // 1. Local state update for instantaneous UI feedback
       setOrders(prev => prev.map(o => o.id === id ? { ...o, status: newStatus as any } : o));
+
+      // 2. Update Firestore document directly
+      try {
+        await updateDoc(doc(db, 'orders', id), { status: newStatus });
+      } catch (fsErr) {
+        console.warn("Direct Firestore update notice:", fsErr);
+      }
+
+      // 3. Call backend API to persist & trigger branded HTML emails to customer
+      const token = sessionStorage.getItem('tizzitech_admin_token') || '';
+      await fetch(`/api/admin/orders/${encodeURIComponent(id)}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: newStatus })
+      }).catch(err => console.error("Failed to send status update email via API:", err));
+
       logAuditActivity('ORDER_UPDATE', `Updated order ${id} status to ${newStatus}`, adminEmail);
     } catch (e: any) {
       console.error("Error updating order status:", e);
@@ -388,6 +419,7 @@ if (!isAuthenticated) {
         <AdminDashboard visits={visits} allUsers={users} auditLogs={auditLogs}
           products={products}
           orders={orders}
+          coupons={coupons}
           onUpdateStock={handleUpdateStock}
           onUpdateOrderStatus={handleUpdateOrderStatus}
           onAddProduct={handleAddProduct}

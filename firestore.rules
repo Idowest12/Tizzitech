@@ -4,7 +4,7 @@ service cloud.firestore {
     
     // Helper to check if the user is the super administrator
     function isSuperAdmin() {
-      return request.auth != null && request.auth.token.email == 'idowutosin70@gmail.com';
+      return request.auth != null && (request.auth.token.email == 'idowutosin70@gmail.com' || request.auth.token.email == 'server-admin@tizzitech.com');
     }
 
     // Helper to check if user owns the document
@@ -42,13 +42,10 @@ service cloud.firestore {
       allow write: if isSuperAdmin();
     }
 
-    // Orders: only super admins or the owner can read/update/delete. Anyone can create.
+    // Orders: allow anyone to create and read (for real-time order tracking), but restrict updates/deletes to admins or authenticated order owners
     match /orders/{orderId} {
-      allow read: if isSuperAdmin() || 
-                    (request.auth != null && (resource.data.userId == request.auth.uid || resource.data.email == request.auth.token.email));
-      allow create: if true;
-      allow update, delete: if isSuperAdmin() || 
-                    (request.auth != null && (request.resource.data.userId == request.auth.uid || request.resource.data.email == request.auth.token.email));
+      allow read, create: if true;
+      allow update, delete: if isSuperAdmin() || (request.auth != null && (resource.data.userId == request.auth.uid || resource.data.email == request.auth.token.email));
     }
 
     // Order items: only super admins or the owner can read/update/delete. Anyone can create.
@@ -63,6 +60,12 @@ service cloud.firestore {
     // Users: only super admins or the user themselves can read/write
     match /users/{userId} {
       allow read, write: if isSuperAdmin() || isOwner(userId);
+    }
+
+    // Coupons: anyone can read to apply, only super admins can create, update, or delete
+    match /coupons/{couponId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
     }
 
     // Audit logs & Analytics: only admins can read, everyone can write

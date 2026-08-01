@@ -20,6 +20,7 @@ import { ContactUs } from "./components/ContactUs";
 import { FAQs } from "./components/FAQs";
 import { TechOfTheDay } from "./components/TechOfTheDay";
 import { ProductDetails } from "./components/ProductDetails";
+import { ProductLaunchWaitlist } from "./components/ProductLaunchWaitlist";
 import { Newsletter } from "./components/Newsletter";
 import { useAuth } from "./contexts/AuthContext";
 import { useToast } from "./contexts/ToastContext";
@@ -116,6 +117,7 @@ export default function App() {
     | "privacy"
     | "terms"
     | "refund"
+    | "launch"
     | "admin"
   >("store");
   const [searchQuery, setSearchQuery] = useState("");
@@ -165,16 +167,18 @@ export default function App() {
     logVisit();
   }, [user]);
   useEffect(() => {
-    // Parse URL for reset token
+    // Parse URL for params like reset-password and tracking
     const params = new URLSearchParams(window.location.search);
     const viewParam = params.get('view');
     const tokenParam = params.get('token');
+    const orderIdParam = params.get('orderId');
     
     if (viewParam === 'reset-password' && tokenParam) {
       setResetToken(tokenParam);
       setView('reset-password');
-      // Clean up URL
       window.history.replaceState({}, '', window.location.pathname);
+    } else if (viewParam === 'tracking') {
+      setView('tracking');
     }
   }, []);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -338,11 +342,10 @@ export default function App() {
     }
   }, [user]);
 
-  // Poll for guest order updates
-
+  // Poll for order status updates
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
-    if (!user && orders.length > 0) {
+    if (orders.length > 0) {
       const fetchStatuses = async () => {
         try {
           const orderIds = orders.map(o => o.id);
@@ -363,18 +366,22 @@ export default function App() {
             });
             if (changed) {
               setOrders(updatedOrders);
-              localStorage.setItem('tizzitech_guest_orders', JSON.stringify(updatedOrders));
+              if (user) {
+                localStorage.setItem(`tizzitech_orders_${user.uid}`, JSON.stringify(updatedOrders));
+              } else {
+                localStorage.setItem('tizzitech_guest_orders', JSON.stringify(updatedOrders));
+              }
             }
           }
         } catch (e: any) {
           if (e.message !== 'Failed to fetch') {
-            console.error("Error fetching guest order statuses:", e);
+            console.error("Error fetching order statuses:", e);
           }
         }
       };
       // Fetch immediately and then poll
       fetchStatuses();
-      intervalId = setInterval(fetchStatuses, 5000);
+      intervalId = setInterval(fetchStatuses, 3000);
     }
     return () => {
       if (intervalId) clearInterval(intervalId);
@@ -543,6 +550,7 @@ export default function App() {
           onOpenAuth={() => setIsAuthOpen(true)}
           onOpenAbout={() => setView("about")}
           onOpenTechOfTheDay={() => setView("techoftheday")}
+          onOpenLaunchWaitlist={() => setView("launch")}
           onSelectCategory={(cat) => {
             setSelectedCategory(cat);
             setView("store");
@@ -567,7 +575,9 @@ export default function App() {
         />
 
       <main className="flex-1 w-full bg-black relative">
-        {view === "techoftheday" ? (
+        {view === "launch" ? (
+          <ProductLaunchWaitlist onGoToStore={() => setView("store")} />
+        ) : view === "techoftheday" ? (
           <TechOfTheDay />
         ) : view === "privacy" ? (
           <PrivacyPolicy />
@@ -624,6 +634,31 @@ export default function App() {
           </div>
         ) : (
           <div className="relative z-10 w-full flex flex-col animate-in fade-in duration-500">
+            {/* PROMINENT TOP PRODUCT LAUNCH ANNOUNCEMENT BANNER */}
+            {!searchQuery && selectedCategory === "All" && selectedBrands.length === 0 && (
+              <div className="w-full bg-gradient-to-r from-cyan-950 via-purple-950 to-neutral-950 border-b border-cyan-500/30 px-4 py-3 text-white">
+                <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-3 w-3 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-cyan-500"></span>
+                    </span>
+                    <p className="text-xs sm:text-sm font-medium">
+                      <span className="font-extrabold text-cyan-300 uppercase tracking-wider">Pre-Launch 2026:</span>{" "}
+                      Galaxy Z Fold 7, iPhone 18 Fold, Pixel 11 Pro & Xiaomi drops. Claim 7% Off & Free Shipping!
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setView("launch")}
+                    className="shrink-0 text-xs font-black uppercase tracking-wider bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-400 hover:to-purple-400 text-black px-4 py-1.5 rounded-full shadow-lg shadow-cyan-950/50 transition-all flex items-center gap-1.5"
+                  >
+                    <span>VIP Pre-Launch Access</span>
+                    <span>→</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Hero Section */}
             {!searchQuery &&
               selectedCategory === "All" &&
@@ -644,16 +679,28 @@ export default function App() {
                         Laptops, phones, keyboards & tech accessories —
                         everything in one place.
                       </p>
-                      <button
-                        onClick={() => {
-                          document
-                            .getElementById("product-grid")
-                            ?.scrollIntoView({ behavior: "smooth" });
-                        }}
-                        className="bg-blue-600 text-white font-bold py-3 px-8 text-sm tracking-widest uppercase hover:bg-blue-700 transition-colors flex items-center gap-4"
-                      >
-                        Shop Now →
-                      </button>
+                      <div className="flex flex-wrap items-center gap-4">
+                        <button
+                          onClick={() => {
+                            document
+                              .getElementById("product-grid")
+                              ?.scrollIntoView({ behavior: "smooth" });
+                          }}
+                          className="bg-blue-600 text-white font-bold py-3 px-8 text-sm tracking-widest uppercase hover:bg-blue-700 transition-colors flex items-center gap-4"
+                        >
+                          Shop Now →
+                        </button>
+                        <button
+                          onClick={() => setView("launch")}
+                          className="bg-neutral-900 border border-cyan-500/40 hover:border-cyan-400 text-cyan-300 font-bold py-3 px-6 text-sm tracking-widest uppercase transition-all flex items-center gap-2 group"
+                        >
+                          <span className="flex h-2 w-2 relative">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+                          </span>
+                          <span>Pre-Launch 2026 ⚡</span>
+                        </button>
+                      </div>
                     </div>
                     <div className="hidden lg:block relative">
                       <div className="aspect-[4/3] bg-neutral-900 overflow-hidden ml-[38px] flex items-center justify-center p-8">

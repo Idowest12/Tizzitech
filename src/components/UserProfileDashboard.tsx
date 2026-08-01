@@ -1,4 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
+import { doc, updateDoc } from "firebase/firestore";
+import { db } from "../firebase";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import {
@@ -248,10 +250,11 @@ export function UserProfileDashboard({
   };
 
   const canCancelOrder = (order: Order) => {
-    if (order.status !== "Confirmed") return false;
-    const orderTime = new Date(order.orderDate).getTime();
+    if (order.status !== "Confirmed" && order.status !== "Pending" && order.status !== "Processing") return false;
+    const rawDate = order.orderDate || (order as any).order_date || (order as any).created_at;
+    const orderTime = rawDate ? new Date(rawDate).getTime() : Date.now();
     const now = new Date().getTime();
-    return (now - orderTime) <= 60 * 60 * 1000;
+    return isNaN(orderTime) || (now - orderTime) <= 60 * 60 * 1000;
   };
 
   const handleCancelOrder = async (orderId: string) => {
@@ -262,23 +265,41 @@ export function UserProfileDashboard({
           ? {
               ...o,
               status: "Cancelled" as OrderStatus,
-              isCancelled: true
+              isCancelled: true,
+              cancelledBy: 'client',
+              cancellationReason: 'Cancelled by customer via self-service portal',
+              cancelledAt: new Date().toISOString()
             }
           : o
       )
     );
     localStorage.setItem(`tizz_cancelled_order_${orderId}`, "true");
 
+    // Real-time update directly to Firestore so Admin dashboard hears onSnapshot immediately
     try {
-      const token = sessionStorage.getItem('tizzitech_token') || localStorage.getItem('tizzitech_token');
-      if (token) {
+      await updateDoc(doc(db, 'orders', orderId), {
+        status: 'Cancelled',
+        cancelledBy: 'client',
+        cancellationReason: 'Cancelled by customer via self-service portal',
+        cancelledAt: new Date().toISOString()
+      });
+    } catch (fsErr) {
+      console.warn('Direct Firestore cancellation notice:', fsErr);
+    }
+
+    try {
+      const activeToken = localStorage.getItem('authToken') || sessionStorage.getItem('tizzitech_token') || localStorage.getItem('tizzitech_token');
+      if (activeToken) {
         await fetch(`/api/orders/${orderId}/cancel`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${token}`
-          }
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${activeToken}`
+          },
+          body: JSON.stringify({ reason: 'Cancelled by customer via self-service portal' })
         });
       }
+      showToast('Order has been successfully cancelled.', 'success');
     } catch(e) {
       console.log('Failed to cancel order on backend', e);
     }
