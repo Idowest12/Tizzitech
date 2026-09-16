@@ -110,7 +110,7 @@ export default function AdminApp() {
     }, (err) => console.warn('Visits read permission denied:', err.message));
 
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-      setUsers(snap.docs.map(d => d.data() as any));
+      setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() } as any)));
     }, (err) => console.warn('Users read permission denied:', err.message));
 
     const unsubCoupons = onSnapshot(collection(db, 'coupons'), (snap) => {

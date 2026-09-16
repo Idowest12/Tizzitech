@@ -2439,6 +2439,22 @@ app.post('/api/auth/register', registerLimiter, honeypotBotDetector, async (req,
         createdAt: new Date().toISOString()
       });
 
+      // Record registered visit in analytics_visits
+      try {
+        const visitVisitorId = (req.body && req.body.visitorId) || userId;
+        await setDoc(doc(collection(db, 'analytics_visits')), {
+          visitorId: visitVisitorId,
+          userId: userId,
+          isRegistered: true,
+          country: geo.country || 'Nigeria',
+          region: geo.region || 'Lagos',
+          city: geo.city || '',
+          timestamp: new Date().toISOString()
+        });
+      } catch (err) {
+        console.warn('Could not record analytics visit during registration:', err);
+      }
+
       const token = jwt.sign({ userId, email: cleanEmail, role: 'user' }, JWT_SECRET, { expiresIn: '7d' });
       
       // Send welcome and verification email

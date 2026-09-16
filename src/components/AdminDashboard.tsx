@@ -152,13 +152,35 @@ export function AdminDashboard({
     description: '',
     usesCount: 0
   });
-  const analyticsStats = useMemo(() => {
-    const total = visits.length;
-    const registered = visits.filter(v => v.isRegistered).length;
-    const guest = total - registered;
+  // Visitor breakdown mode (sessions vs people)
+  const [breakdownType, setBreakdownType] = useState<'visits' | 'visitors'>('visits');
 
-    const uniqueVisitors = new Set(visits.map(v => v.visitorId)).size;
-    const regular = visits.length - uniqueVisitors; // rough estimate of return visits
+  const analyticsStats = useMemo(() => {
+    const totalVisits = visits.length;
+    const registeredVisits = visits.filter(v => v.isRegistered).length;
+    const guestVisits = Math.max(0, totalVisits - registeredVisits);
+
+    // Unique visitors tracked across all visits
+    const uniqueVisitorIds = new Set(visits.map(v => v.visitorId || v.ip));
+    const uniqueVisitors = uniqueVisitorIds.size;
+
+    // Distinct visitor devices that logged in/registered
+    const registeredVisitorIds = new Set(visits.filter(v => v.isRegistered).map(v => v.visitorId || v.ip));
+    const uniqueRegisteredVisitors = registeredVisitorIds.size;
+
+    // Actual registered user accounts from database (the ultimate source of truth)
+    const totalRegisteredUsers = allUsers.length;
+
+    // Calculate how many users signed up today (local date match)
+    const todayDateStr = new Date().toLocaleDateString();
+    const signupsToday = allUsers.filter(u => {
+      if (!u.createdAt) return false;
+      const d = new Date(u.createdAt);
+      return !isNaN(d.getTime()) && d.toLocaleDateString() === todayDateStr;
+    }).length;
+
+    // Unique guest visitors (browsers that have not signed in or registered)
+    const uniqueGuests = Math.max(0, uniqueVisitors - uniqueRegisteredVisitors);
 
     // Group by day for chart
     const dailyVisits: Record<string, number> = {};
@@ -199,19 +221,22 @@ export function AdminDashboard({
     const signupsByRegion: Record<string, number> = {};
 
     allUsers.forEach(u => {
-      const countryRaw = u.country ? u.country.trim() : '';
-      if (!countryRaw || countryRaw.toUpperCase() === 'UNKNOWN') return; // ignore legacy/unknown
+      let countryRaw = u.country ? u.country.trim() : '';
+      if (!countryRaw || countryRaw.toUpperCase() === 'UNKNOWN') {
+        countryRaw = 'Nigeria';
+      }
 
       const country = countryRaw.toUpperCase();
-      const region = u.region ? u.region.trim() : '';
+      let region = u.region ? u.region.trim() : '';
+      if (!region || region.toUpperCase() === 'UNKNOWN') {
+        region = u.address ? u.address.split(',')[0].trim() : 'Lagos';
+      }
 
       const countryName = country === 'US' ? 'United States' : (country === 'NG' ? 'Nigeria' : (country === 'GB' ? 'United Kingdom' : countryRaw));
       signupsByCountry[countryName] = (signupsByCountry[countryName] || 0) + 1;
 
-      if (region && region.toUpperCase() !== 'UNKNOWN') {
-        const regionKey = `${region} (${countryName})`;
-        signupsByRegion[regionKey] = (signupsByRegion[regionKey] || 0) + 1;
-      }
+      const regionKey = `${region} (${countryName})`;
+      signupsByRegion[regionKey] = (signupsByRegion[regionKey] || 0) + 1;
     });
 
     const countriesVisitsList = Object.keys(visitsByCountry).map(c => ({
@@ -235,11 +260,18 @@ export function AdminDashboard({
     })).sort((a, b) => b.count - a.count);
 
     return { 
-      total, 
-      registered, 
-      guest, 
+      total: totalVisits, 
+      totalVisits,
+      registered: registeredVisits, 
+      registeredVisits,
+      guest: guestVisits, 
+      guestVisits,
       uniqueVisitors, 
-      regular, 
+      uniqueRegisteredVisitors,
+      totalRegisteredUsers,
+      signupsToday,
+      uniqueGuests,
+      regular: Math.max(0, totalVisits - uniqueVisitors), 
       chartData,
       countriesVisitsList,
       regionsVisitsList,
@@ -2876,22 +2908,62 @@ export function AdminDashboard({
                 <h1 className="text-2xl font-bold text-white">Analytics</h1>
                 <p className="text-neutral-400 text-sm mt-1">Detailed performance metrics and visitor insights.</p>
               </div>
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                 <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
-                   <h3 className="text-neutral-400 text-xs font-bold uppercase tracking-widest mb-4">Total Visitors</h3>
-                   <div className="text-4xl font-black text-white">{analyticsStats.total.toLocaleString()}</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                 <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+                   <div>
+                     <div className="flex items-center justify-between mb-3">
+                       <h3 className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Total Visits</h3>
+                       <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-neutral-900 text-neutral-400 border border-neutral-800">Traffic</span>
+                     </div>
+                     <div className="text-4xl font-black text-white">{analyticsStats.totalVisits.toLocaleString()}</div>
+                   </div>
+                   <p className="text-xs text-neutral-500 mt-4">Total browsing sessions logged</p>
                  </div>
-                 <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
-                   <h3 className="text-neutral-400 text-xs font-bold uppercase tracking-widest mb-4">Unique Visitors</h3>
-                   <div className="text-4xl font-black text-white">{analyticsStats.uniqueVisitors.toLocaleString()}</div>
+
+                 <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+                   <div>
+                     <div className="flex items-center justify-between mb-3">
+                       <h3 className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Unique Visitors</h3>
+                       <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-neutral-900 text-neutral-400 border border-neutral-800">Devices</span>
+                     </div>
+                     <div className="text-4xl font-black text-white">{analyticsStats.uniqueVisitors.toLocaleString()}</div>
+                   </div>
+                   <p className="text-xs text-neutral-500 mt-4">Distinct visitor devices tracked</p>
                  </div>
-                 <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
-                   <h3 className="text-neutral-400 text-xs font-bold uppercase tracking-widest mb-4">Registered Users</h3>
-                   <div className="text-4xl font-black text-blue-500">{analyticsStats.registered.toLocaleString()}</div>
+
+                 <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+                   <div>
+                     <div className="flex items-center justify-between mb-3">
+                       <h3 className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Registered Users</h3>
+                       {analyticsStats.signupsToday > 0 ? (
+                         <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800/80 font-bold flex items-center gap-1">
+                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                           +{analyticsStats.signupsToday} new today
+                         </span>
+                       ) : (
+                         <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-blue-950/60 text-blue-400 border border-blue-900/50">Accounts</span>
+                       )}
+                     </div>
+                     <div className="text-4xl font-black text-blue-500">{analyticsStats.totalRegisteredUsers.toLocaleString()}</div>
+                   </div>
+                   <div className="flex items-center justify-between text-xs text-neutral-500 mt-4">
+                     <span>Verified user accounts</span>
+                     <span className="text-neutral-400 font-mono text-[11px]">{analyticsStats.registeredVisits.toLocaleString()} visits</span>
+                   </div>
                  </div>
-                 <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
-                   <h3 className="text-neutral-400 text-xs font-bold uppercase tracking-widest mb-4">Guests</h3>
-                   <div className="text-4xl font-black text-neutral-500">{analyticsStats.guest.toLocaleString()}</div>
+
+                 <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+                   <div>
+                     <div className="flex items-center justify-between mb-3">
+                       <h3 className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Guest Visitors</h3>
+                       <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-neutral-900 text-neutral-400 border border-neutral-800">Unregistered</span>
+                     </div>
+                     <div className="text-4xl font-black text-neutral-400">{analyticsStats.uniqueGuests.toLocaleString()}</div>
+                   </div>
+                   <div className="flex items-center justify-between text-xs text-neutral-500 mt-4">
+                     <span>Unique guest shoppers</span>
+                     <span className="text-neutral-400 font-mono text-[11px]">{analyticsStats.guestVisits.toLocaleString()} visits</span>
+                   </div>
                  </div>
               </div>
 
@@ -2919,27 +2991,87 @@ export function AdminDashboard({
                      </ResponsiveContainer>
                    </div>
                  </div>
-                 <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
-                   <h3 className="text-neutral-400 text-xs font-bold uppercase tracking-widest mb-4">Visitor Type Breakdown</h3>
-                   <div className="w-40 h-40 mx-auto rounded-full border-[16px] border-neutral-900 border-t-blue-500 border-r-indigo-500 border-b-purple-500 relative flex items-center justify-center">
-                      <div className="text-center">
-                         <span className="block text-xl font-bold text-white">{analyticsStats.total > 0 ? '100%' : '0%'}</span>
-                         <span className="text-[10px] text-neutral-500 uppercase">Visits</span>
-                      </div>
-                   </div>
-                   <div className="mt-6 space-y-2 text-sm">
-                      <div className="flex justify-between items-center">
-                        <span className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-500"></div>Signed Up</span>
-                        <span className="font-bold text-white">
-                          {analyticsStats.total > 0 ? Math.round((analyticsStats.registered / analyticsStats.total) * 100) : 0}%
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-indigo-500"></div>Guest / Non-Signed Up</span>
-                        <span className="font-bold text-white">
-                          {analyticsStats.total > 0 ? Math.round((analyticsStats.guest / analyticsStats.total) * 100) : 0}%
-                        </span>
-                      </div>
+                 <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+                   <div>
+                     <div className="flex items-center justify-between mb-4">
+                       <h3 className="text-neutral-400 text-xs font-bold uppercase tracking-widest">Visitor Breakdown</h3>
+                       <div className="flex bg-neutral-900 border border-neutral-800 rounded-lg p-0.5 text-xs font-semibold">
+                         <button 
+                           type="button" 
+                           onClick={() => setBreakdownType('visits')}
+                           className={`px-2.5 py-1 rounded-md transition-colors ${breakdownType === 'visits' ? 'bg-blue-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'}`}
+                         >
+                           Visits
+                         </button>
+                         <button 
+                           type="button" 
+                           onClick={() => setBreakdownType('visitors')}
+                           className={`px-2.5 py-1 rounded-md transition-colors ${breakdownType === 'visitors' ? 'bg-blue-600 text-white shadow-sm' : 'text-neutral-400 hover:text-white'}`}
+                         >
+                           People
+                         </button>
+                       </div>
+                     </div>
+
+                     {breakdownType === 'visits' ? (
+                       <>
+                         <div className="w-40 h-40 mx-auto rounded-full border-[16px] border-neutral-900 border-t-blue-500 border-r-indigo-500 border-b-purple-500 relative flex items-center justify-center">
+                            <div className="text-center">
+                               <span className="block text-xl font-bold text-white">{analyticsStats.totalVisits.toLocaleString()}</span>
+                               <span className="text-[10px] text-neutral-500 uppercase font-semibold">Visits</span>
+                            </div>
+                         </div>
+                         <div className="mt-6 space-y-2.5 text-sm">
+                            <div className="flex justify-between items-center">
+                              <span className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-blue-500"></div>Signed-In Visits</span>
+                              <div className="text-right">
+                                <span className="font-bold text-white mr-1.5">{analyticsStats.registeredVisits.toLocaleString()}</span>
+                                <span className="text-xs text-neutral-400">
+                                  ({analyticsStats.totalVisits > 0 ? Math.round((analyticsStats.registeredVisits / analyticsStats.totalVisits) * 100) : 0}%)
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-indigo-500"></div>Guest Visits</span>
+                              <div className="text-right">
+                                <span className="font-bold text-white mr-1.5">{analyticsStats.guestVisits.toLocaleString()}</span>
+                                <span className="text-xs text-neutral-400">
+                                  ({analyticsStats.totalVisits > 0 ? Math.round((analyticsStats.guestVisits / analyticsStats.totalVisits) * 100) : 0}%)
+                                </span>
+                              </div>
+                            </div>
+                         </div>
+                       </>
+                     ) : (
+                       <>
+                         <div className="w-40 h-40 mx-auto rounded-full border-[16px] border-neutral-900 border-t-emerald-500 border-r-teal-500 border-b-cyan-500 relative flex items-center justify-center">
+                            <div className="text-center">
+                               <span className="block text-xl font-bold text-white">{analyticsStats.uniqueVisitors.toLocaleString()}</span>
+                               <span className="text-[10px] text-neutral-500 uppercase font-semibold">Visitors</span>
+                            </div>
+                         </div>
+                         <div className="mt-6 space-y-2.5 text-sm">
+                            <div className="flex justify-between items-center">
+                              <span className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-emerald-500"></div>Registered Accounts</span>
+                              <div className="text-right">
+                                <span className="font-bold text-white mr-1.5">{analyticsStats.totalRegisteredUsers.toLocaleString()}</span>
+                                <span className="text-xs text-neutral-400">
+                                  ({(analyticsStats.uniqueGuests + analyticsStats.totalRegisteredUsers) > 0 ? Math.round((analyticsStats.totalRegisteredUsers / (analyticsStats.uniqueGuests + analyticsStats.totalRegisteredUsers)) * 100) : 0}%)
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-teal-500"></div>Guest Visitors</span>
+                              <div className="text-right">
+                                <span className="font-bold text-white mr-1.5">{analyticsStats.uniqueGuests.toLocaleString()}</span>
+                                <span className="text-xs text-neutral-400">
+                                  ({(analyticsStats.uniqueGuests + analyticsStats.totalRegisteredUsers) > 0 ? Math.round((analyticsStats.uniqueGuests / (analyticsStats.uniqueGuests + analyticsStats.totalRegisteredUsers)) * 100) : 0}%)
+                                </span>
+                              </div>
+                            </div>
+                         </div>
+                       </>
+                     )}
                    </div>
                  </div>
               </div>
