@@ -156,6 +156,92 @@ export function UserProfileDashboard({
     },
   ]);
 
+  // Security password change states
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSuccess, setPasswordSuccess] = useState("");
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [isSendingVerification, setIsSendingVerification] = useState(false);
+
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError("");
+    setPasswordSuccess("");
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPasswordError("Please fill in all password fields.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError("New passwords do not match.");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setPasswordError("New password must be at least 8 characters long.");
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    try {
+      const { changePassword } = useAuth();
+    } catch (e) {}
+
+    try {
+      const storedToken = localStorage.getItem("authToken");
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${storedToken}`,
+        },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const contentType = res.headers.get("content-type");
+      const data = (contentType && contentType.includes("application/json")) ? await res.json() : { success: false, message: "Server unavailable" };
+      if (!data.success) {
+        setPasswordError(data.message || "Failed to update password.");
+      } else {
+        setPasswordSuccess("Password successfully updated!");
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+        showToast("Password updated successfully!", "success");
+      }
+    } catch (err: any) {
+      setPasswordError(err.message || "An error occurred while updating password.");
+    } finally {
+      setIsUpdatingPassword(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    setIsSendingVerification(true);
+    try {
+      const storedToken = localStorage.getItem("authToken");
+      const res = await fetch("/api/auth/resend-verification", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${storedToken}`,
+        },
+        body: JSON.stringify({ email: profile?.email || user?.email }),
+      });
+      const contentType = res.headers.get("content-type");
+      const data = (contentType && contentType.includes("application/json")) ? await res.json() : { success: false, message: "Server response error" };
+      if (data.success) {
+        showToast("Verification link dispatched to your email inbox!", "success");
+      } else {
+        showToast(data.message || "Failed to send verification email.", "error");
+      }
+    } catch (e) {
+      showToast("Unable to send verification link. Try again later.", "error");
+    } finally {
+      setIsSendingVerification(false);
+    }
+  };
+
   // Sync edit values with profile when profile loads
   useEffect(() => {
     if (profile) {
@@ -1000,19 +1086,68 @@ export function UserProfileDashboard({
         <div className="space-y-6 animate-in fade-in duration-300">
           <div className="border-b border-neutral-800 pb-4">
             <h3 className="text-xl font-serif font-black text-white uppercase tracking-tight">
-              Change Password
+              Security & Authentication
             </h3>
             <p className="text-xs text-neutral-400 mt-1">
-              Configure multi-factor validation, passwords, and sessions
-              security logs.
+              Configure your credentials, manage email verification, and review session security.
             </p>
           </div>
 
+          {/* Email Verification Status Card */}
+          <div className="bg-neutral-900/60 border border-neutral-800 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center ${profile?.emailVerified ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                {profile?.emailVerified ? <ShieldCheck className="w-5 h-5" /> : <Mail className="w-5 h-5" />}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-white">Email Address:</span>
+                  <span className="text-xs text-neutral-300 font-mono">{profile?.email || user?.email}</span>
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${profile?.emailVerified ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
+                    {profile?.emailVerified ? 'Verified Account' : 'Verification Required'}
+                  </span>
+                  {!profile?.emailVerified && (
+                    <span className="text-[11px] text-neutral-400">Click resend to receive a fresh verification link.</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {!profile?.emailVerified && (
+              <button
+                type="button"
+                onClick={handleResendVerification}
+                disabled={isSendingVerification}
+                className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold text-xs uppercase tracking-wider px-4 py-2 rounded-xl transition-all flex items-center gap-2 shrink-0 disabled:opacity-50"
+              >
+                {isSendingVerification ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Send className="w-3.5 h-3.5" />
+                )}
+                <span>Resend Verification Link</span>
+              </button>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-6">
-            <div className="space-y-4">
+            <form onSubmit={handleUpdatePassword} className="space-y-4">
               <p className="text-[10px] font-black uppercase tracking-widest text-neutral-400 font-mono">
                 Update Account Password
               </p>
+
+              {passwordError && (
+                <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-3.5 py-2.5 rounded-xl text-xs">
+                  {passwordError}
+                </div>
+              )}
+              {passwordSuccess && (
+                <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3.5 py-2.5 rounded-xl text-xs">
+                  {passwordSuccess}
+                </div>
+              )}
 
               <div>
                 <label className="block text-[9px] font-bold text-neutral-500 uppercase mb-1.5 font-mono">
@@ -1020,6 +1155,9 @@ export function UserProfileDashboard({
                 </label>
                 <input
                   type="password"
+                  required
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
                   placeholder="••••••••"
                   className="w-full bg-black border border-neutral-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
                 />
@@ -1027,40 +1165,45 @@ export function UserProfileDashboard({
 
               <div>
                 <label className="block text-[9px] font-bold text-neutral-500 uppercase mb-1.5 font-mono">
-                  New Password
+                  New Password (min. 8 characters, uppercase, number & symbol)
                 </label>
                 <input
                   type="password"
-                  placeholder="Enter new password"
+                  required
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter new secure password"
                   className="w-full bg-black border border-neutral-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
 
               <div>
                 <label className="block text-[9px] font-bold text-neutral-500 uppercase mb-1.5 font-mono">
-                  Confirm Password
+                  Confirm New Password
                 </label>
                 <input
                   type="password"
-                  placeholder="Repeat new password"
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat new secure password"
                   className="w-full bg-black border border-neutral-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
 
               <button
-                onClick={() => {
-                  setIsSaving(true);
-                  setTimeout(() => {
-                    setIsSaving(false);
-                    setSaveSuccess(true);
-                    setTimeout(() => setSaveSuccess(false), 2000);
-                  }, 500);
-                }}
-                className="bg-neutral-800 hover:bg-neutral-700 text-white font-bold text-[10px] uppercase tracking-wider px-4 py-2 rounded-lg transition-colors border border-neutral-700 inline-block"
+                type="submit"
+                disabled={isUpdatingPassword}
+                className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] uppercase tracking-wider px-5 py-2.5 rounded-xl transition-colors inline-flex items-center gap-2 disabled:opacity-50"
               >
-                Update Password
+                {isUpdatingPassword ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Key className="w-3.5 h-3.5" />
+                )}
+                <span>Update Password</span>
               </button>
-            </div>
+            </form>
 
             <div className="space-y-5 bg-black/40 border border-neutral-800 p-5 rounded-2xl">
               <p className="text-[10px] font-black uppercase tracking-widest text-neutral-400 font-mono flex items-center gap-2">
@@ -1141,6 +1284,7 @@ export function UserProfileDashboard({
                         <img
                           src={item.imageUrl}
                           alt={item.name}
+                          referrerPolicy="no-referrer"
                           className="max-h-full max-w-full object-contain"
                         />
                       ) : (
@@ -1254,7 +1398,7 @@ export function UserProfileDashboard({
   );
 
   return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-500">
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-500 w-full overflow-x-hidden">
       <div className="mb-8">
         <h1 className="text-3xl sm:text-4xl font-serif font-black text-white uppercase tracking-tight">
           Profile
@@ -1359,9 +1503,9 @@ export function UserProfileDashboard({
               {activeTab === "personal" && (
                 <div
                   id={"mobile-tab-" + "personal"}
-                  className="lg:hidden mt-4 mb-6 animate-in slide-in-from-top-2 duration-300 -mx-6"
+                  className="lg:hidden mt-3 mb-5 animate-in slide-in-from-top-2 duration-300 w-full"
                 >
-                  <div className="bg-neutral-950/50 border-y border-neutral-800 p-6 sm:px-8 shadow-inner overflow-hidden">
+                  <div className="bg-neutral-950/70 border border-neutral-800 p-4 sm:p-6 rounded-2xl shadow-inner overflow-hidden">
                     {tabContents()}
                   </div>
                 </div>
@@ -1396,9 +1540,9 @@ export function UserProfileDashboard({
               {activeTab === "orders" && (
                 <div
                   id={"mobile-tab-" + "orders"}
-                  className="lg:hidden mt-4 mb-6 animate-in slide-in-from-top-2 duration-300 -mx-6"
+                  className="lg:hidden mt-3 mb-5 animate-in slide-in-from-top-2 duration-300 w-full"
                 >
-                  <div className="bg-neutral-950/50 border-y border-neutral-800 p-6 sm:px-8 shadow-inner overflow-hidden">
+                  <div className="bg-neutral-950/70 border border-neutral-800 p-4 sm:p-6 rounded-2xl shadow-inner overflow-hidden">
                     {tabContents()}
                   </div>
                 </div>
@@ -1424,9 +1568,9 @@ export function UserProfileDashboard({
               {activeTab === "address" && (
                 <div
                   id={"mobile-tab-" + "address"}
-                  className="lg:hidden mt-4 mb-6 animate-in slide-in-from-top-2 duration-300 -mx-6"
+                  className="lg:hidden mt-3 mb-5 animate-in slide-in-from-top-2 duration-300 w-full"
                 >
-                  <div className="bg-neutral-950/50 border-y border-neutral-800 p-6 sm:px-8 shadow-inner overflow-hidden">
+                  <div className="bg-neutral-950/70 border border-neutral-800 p-4 sm:p-6 rounded-2xl shadow-inner overflow-hidden">
                     {tabContents()}
                   </div>
                 </div>
@@ -1457,9 +1601,9 @@ export function UserProfileDashboard({
               {activeTab === "wishlist" && (
                 <div
                   id={"mobile-tab-" + "wishlist"}
-                  className="lg:hidden mt-4 mb-6 animate-in slide-in-from-top-2 duration-300 -mx-6"
+                  className="lg:hidden mt-3 mb-5 animate-in slide-in-from-top-2 duration-300 w-full"
                 >
-                  <div className="bg-neutral-950/50 border-y border-neutral-800 p-6 sm:px-8 shadow-inner overflow-hidden">
+                  <div className="bg-neutral-950/70 border border-neutral-800 p-4 sm:p-6 rounded-2xl shadow-inner overflow-hidden">
                     {tabContents()}
                   </div>
                 </div>
@@ -1485,9 +1629,9 @@ export function UserProfileDashboard({
               {activeTab === "security" && (
                 <div
                   id={"mobile-tab-" + "security"}
-                  className="lg:hidden mt-4 mb-6 animate-in slide-in-from-top-2 duration-300 -mx-6"
+                  className="lg:hidden mt-3 mb-5 animate-in slide-in-from-top-2 duration-300 w-full"
                 >
-                  <div className="bg-neutral-950/50 border-y border-neutral-800 p-6 sm:px-8 shadow-inner overflow-hidden">
+                  <div className="bg-neutral-950/70 border border-neutral-800 p-4 sm:p-6 rounded-2xl shadow-inner overflow-hidden">
                     {tabContents()}
                   </div>
                 </div>
@@ -1513,9 +1657,9 @@ export function UserProfileDashboard({
               {activeTab === "support" && (
                 <div
                   id={"mobile-tab-" + "support"}
-                  className="lg:hidden mt-4 mb-6 animate-in slide-in-from-top-2 duration-300 -mx-6"
+                  className="lg:hidden mt-3 mb-5 animate-in slide-in-from-top-2 duration-300 w-full"
                 >
-                  <div className="bg-neutral-950/50 border-y border-neutral-800 p-6 sm:px-8 shadow-inner overflow-hidden">
+                  <div className="bg-neutral-950/70 border border-neutral-800 p-4 sm:p-6 rounded-2xl shadow-inner overflow-hidden">
                     {tabContents()}
                   </div>
                 </div>
@@ -1591,11 +1735,11 @@ export function UserProfileDashboard({
         </div>
       </div>
 {selectedOrder && (
-  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-    <div className="bg-black border border-neutral-800 w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl p-6 md:p-8 relative">
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-x-hidden">
+    <div className="bg-black border border-neutral-800 w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-3xl p-4 sm:p-6 md:p-8 relative">
       <button 
         onClick={() => setSelectedOrder(null)}
-        className="absolute top-6 right-6 p-2 bg-neutral-900 rounded-full text-white hover:bg-white hover:text-black transition-colors"
+        className="absolute top-4 right-4 sm:top-6 sm:right-6 p-2 bg-neutral-900 rounded-full text-white hover:bg-white hover:text-black transition-colors"
       >
         <X className="w-5 h-5" />
       </button>
@@ -1604,7 +1748,7 @@ export function UserProfileDashboard({
       <div className="flex items-center justify-between mb-8 pb-4 border-b border-neutral-900">
         <div>
           <p className="text-xs text-neutral-500 font-mono uppercase tracking-widest mb-1">Order ID</p>
-          <p className="text-white font-mono font-bold">{selectedOrder.id}</p>
+          <p className="text-white font-mono font-bold text-sm sm:text-base break-all">{selectedOrder.id}</p>
         </div>
         <div className="text-right">
           <p className="text-xs text-neutral-500 font-mono uppercase tracking-widest mb-1">Total Amount</p>
@@ -1614,13 +1758,13 @@ export function UserProfileDashboard({
       
       <div className="space-y-8">
         {/* Live shipping stage tracker */}
-        <div className="bg-neutral-950 rounded-2xl p-6 border border-neutral-900">
+        <div className="bg-neutral-950 rounded-2xl p-4 sm:p-6 border border-neutral-900 overflow-hidden">
           <p className="text-xs font-black uppercase tracking-widest text-neutral-500 mb-6 font-mono">
             Live Stage Tracking
           </p>
-          <div className="grid grid-cols-4 gap-2 relative">
+          <div className="grid grid-cols-4 gap-1 sm:gap-2 relative">
             {/* Progress line connection tracker */}
-            <div className="absolute top-4 inset-x-8 h-1 bg-neutral-800 z-0">
+            <div className="absolute top-4 inset-x-6 sm:inset-x-8 h-1 bg-neutral-800 z-0">
               <div
                 className="bg-blue-500 h-full transition-all duration-1000"
                 style={{
@@ -1639,7 +1783,7 @@ export function UserProfileDashboard({
               />
             </div>
             {/* Step details 1 */}
-            <div className="text-center z-10">
+            <div className="text-center z-10 min-w-0">
               <div
                 className={`w-8 h-8 rounded-full text-xs font-black mx-auto flex items-center justify-center transition-all ${
                   selectedOrder.status !== "Cancelled"
@@ -1649,12 +1793,12 @@ export function UserProfileDashboard({
               >
                 {selectedOrder.status === "Cancelled" ? "X" : "1"}
               </div>
-              <p className="text-[10px] font-black tracking-widest uppercase mt-3 text-neutral-300">
+              <p className="text-[9px] sm:text-[10px] font-bold sm:font-black tracking-tight sm:tracking-widest uppercase mt-2 sm:mt-3 text-neutral-300 truncate">
                 {selectedOrder.status === "Cancelled" ? "Cancelled" : "Confirmed"}
               </p>
             </div>
             {/* Step details 2 */}
-            <div className="text-center z-10">
+            <div className="text-center z-10 min-w-0">
               <div
                 className={`w-8 h-8 rounded-full text-xs font-black mx-auto flex items-center justify-center transition-all ${
                   selectedOrder.status !== "Confirmed" &&
@@ -1665,12 +1809,12 @@ export function UserProfileDashboard({
               >
                 2
               </div>
-              <p className="text-[10px] font-black tracking-widest uppercase mt-3 text-neutral-300">
+              <p className="text-[9px] sm:text-[10px] font-bold sm:font-black tracking-tight sm:tracking-widest uppercase mt-2 sm:mt-3 text-neutral-300 truncate">
                 Dispatched
               </p>
             </div>
             {/* Step details 3 */}
-            <div className="text-center z-10">
+            <div className="text-center z-10 min-w-0">
               <div
                 className={`w-8 h-8 rounded-full text-xs font-black mx-auto flex items-center justify-center transition-all ${
                   selectedOrder.status === "Shipped" ||
@@ -1682,12 +1826,12 @@ export function UserProfileDashboard({
               >
                 3
               </div>
-              <p className="text-[10px] font-black tracking-widest uppercase mt-3 text-neutral-300">
+              <p className="text-[9px] sm:text-[10px] font-bold sm:font-black tracking-tight sm:tracking-widest uppercase mt-2 sm:mt-3 text-neutral-300 truncate">
                 In Transit
               </p>
             </div>
             {/* Step details 4 */}
-            <div className="text-center z-10">
+            <div className="text-center z-10 min-w-0">
               <div
                 className={`w-8 h-8 rounded-full text-xs font-black mx-auto flex items-center justify-center transition-all ${
                   selectedOrder.status === "Delivered"
@@ -1698,7 +1842,7 @@ export function UserProfileDashboard({
                 {selectedOrder.status === "Delivered" ? <Check className="w-4 h-4" /> : "4"}
               </div>
               <p
-                className={`text-[10px] font-black tracking-widest uppercase mt-3 ${selectedOrder.status === "Delivered" ? "text-emerald-400" : "text-neutral-500"}`}
+                className={`text-[9px] sm:text-[10px] font-bold sm:font-black tracking-tight sm:tracking-widest uppercase mt-2 sm:mt-3 truncate ${selectedOrder.status === "Delivered" ? "text-emerald-400" : "text-neutral-500"}`}
               >
                 Delivered
               </p>
@@ -1723,6 +1867,7 @@ export function UserProfileDashboard({
                       <img
                         src={item.imageUrl}
                         alt={item.name}
+                        referrerPolicy="no-referrer"
                         className="w-full h-full object-cover"
                       />
                     ) : (

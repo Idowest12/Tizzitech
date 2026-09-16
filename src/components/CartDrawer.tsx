@@ -45,9 +45,9 @@ export function CartDrawer({ isOpen, onClose, cart, updateQuantity, removeFromCa
             <ul className="-my-6 divide-y divide-neutral-900">
               {cart.map((item) => (
                 <li key={item.id} className="flex py-6">
-                  <div className="h-24 w-24 flex-shrink-0 overflow-hidden bg-neutral-900 border border-neutral-800 flex items-center justify-center">
+                  <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-xl bg-neutral-900 border border-neutral-800 flex items-center justify-center">
                     {item.imageUrl ? (
-                      <img src={item.imageUrl} alt={item.name} className="h-full w-full object-cover object-center" />
+                      <img src={item.imageUrl} alt={item.name} referrerPolicy="no-referrer" className="h-full w-full object-cover object-center rounded-xl" />
                     ) : (
                       <span className="text-neutral-700 text-[10px] uppercase tracking-widest font-bold">No Image</span>
                     )}

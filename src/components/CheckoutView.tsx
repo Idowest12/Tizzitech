@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { usePaystackPayment } from 'react-paystack';
 import { PaystackService } from '../services/paystack';
 import { CartItem, Order } from '../types';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 
 interface CheckoutViewProps {
@@ -74,7 +74,7 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
 
   const discountAmount = getDiscountAmount();
   const baseDeliveryFee = getDeliveryFee(lga);
-  const deliveryFee = (appliedCoupon?.type === 'Shipping') ? 0 : baseDeliveryFee;
+  const deliveryFee = (appliedCoupon?.type === 'Shipping' || appliedCoupon?.freeShipping) ? 0 : baseDeliveryFee;
   const total = Math.max(0, subtotal + deliveryFee - discountAmount);
 
   const handleApplyCoupon = async () => {
@@ -82,36 +82,71 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
     setCouponSuccess('');
     if (!couponCode) return;
     const cleanCode = couponCode.toUpperCase().replace(/\s+/g, '');
+    const rawInput = couponCode.trim();
     
     try {
+      // 1. Check standard coupon code in Firestore
       const couponSnap = await getDoc(doc(db, 'coupons', cleanCode));
-      if (!couponSnap.exists()) {
-        setCouponError('Invalid coupon code. Please try again.');
+      if (couponSnap.exists()) {
+        const couponData = couponSnap.data();
+        if (couponData.status !== 'Active') {
+          setCouponError('This coupon is currently inactive.');
+          return;
+        }
+        if (couponData.expiryDate && new Date(couponData.expiryDate).getTime() < Date.now()) {
+          setCouponError('This coupon has expired.');
+          return;
+        }
+        if (subtotal < (couponData.minPurchase || 0)) {
+          setCouponError(`Minimum purchase of ₦${Number(couponData.minPurchase).toLocaleString()} required.`);
+          return;
+        }
+        setAppliedCoupon(couponData);
+        setCouponSuccess(`Coupon "${cleanCode}" applied! (Saved ₦${(couponData.type === 'Percentage' ? Math.round(subtotal * (Number(couponData.value) / 100)) : couponData.type === 'Fixed' ? couponData.value : baseDeliveryFee).toLocaleString()})`);
         return;
       }
-      
-      const couponData = couponSnap.data();
-      
-      if (couponData.status !== 'Active') {
-        setCouponError('This coupon is currently inactive.');
+
+      // 2. Check VIP Pre-Launch Waitlist Pass ID or registered Waitlist Email
+      const subsRef = collection(db, 'newsletter_subscribers');
+      let vipMatch = false;
+      let subscriberData: any = null;
+
+      // Query by Pass ID
+      const qPass = query(subsRef, where('vipPassId', '==', cleanCode));
+      const passSnap = await getDocs(qPass);
+
+      if (!passSnap.empty) {
+        vipMatch = true;
+        subscriberData = passSnap.docs[0].data();
+      } else {
+        // Query by registered email
+        const qEmail = query(subsRef, where('email', '==', rawInput.toLowerCase()));
+        const emailSnap = await getDocs(qEmail);
+        if (!emailSnap.empty) {
+          vipMatch = true;
+          subscriberData = emailSnap.docs[0].data();
+        }
+      }
+
+      if (vipMatch && subscriberData) {
+        const vipCoupon = {
+          code: subscriberData.vipPassId || cleanCode,
+          type: 'Percentage',
+          value: 7,
+          freeShipping: true,
+          minPurchase: 0,
+          isVipPass: true
+        };
+        setAppliedCoupon(vipCoupon);
+        const percentSavings = Math.round(subtotal * 0.07);
+        setCouponSuccess(`✨ VIP Pre-Launch Pass Verified! 7% Discount (₦${percentSavings.toLocaleString()}) + 100% Free Launch Delivery Applied!`);
         return;
       }
-      
-      if (couponData.expiryDate && new Date(couponData.expiryDate).getTime() < Date.now()) {
-        setCouponError('This coupon has expired.');
-        return;
-      }
-      
-      if (subtotal < (couponData.minPurchase || 0)) {
-        setCouponError(`Minimum purchase of ₦${Number(couponData.minPurchase).toLocaleString()} required.`);
-        return;
-      }
-      
-      setAppliedCoupon(couponData);
-      setCouponSuccess(`Coupon "${cleanCode}" applied! (₦${(couponData.type === 'Percentage' ? Math.round(subtotal * (Number(couponData.value) / 100)) : couponData.type === 'Fixed' ? couponData.value : baseDeliveryFee).toLocaleString()} saved)`);
+
+      setCouponError('Invalid coupon or VIP Pass ID. Please enter your VIP Pass ID (e.g. TZ-VIP-XXXXX) or registered Waitlist email.');
     } catch(err) {
       console.error(err);
-      setCouponError('An error occurred during verification.');
+      setCouponError('An error occurred during coupon verification.');
     }
   };
 
@@ -156,9 +191,13 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
     const address = `${streetAddress}, ${city}, ${lga}, ${stateLocation}` || 'Lagos Deliveries, Lagos, Nigeria';
     
     try {
+      const activeToken = localStorage.getItem('authToken') || sessionStorage.getItem('tizzitech_token') || localStorage.getItem('tizzitech_token');
       const response = await fetch('/api/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(activeToken ? { 'Authorization': `Bearer ${activeToken}` } : {})
+        },
         body: JSON.stringify({
           fullname,
           email: emailAddress,
@@ -259,7 +298,7 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
   }
 
   return (
-    <div className="w-full bg-black text-white relative animate-in fade-in duration-500 min-h-screen pb-24">
+    <div className="w-full bg-black text-white relative animate-in fade-in duration-500 min-h-screen pb-24 overflow-x-hidden">
       {/* Upper Navigation & Title Frame */}
       <div className="border-b border-neutral-900 bg-neutral-950/40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -279,19 +318,19 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
             </div>
 
             {/* Expansive Progress Bar */}
-            <div className="flex items-center gap-4 bg-neutral-950 border border-neutral-900 px-6 py-4 rounded-xl shrink-0">
-              <div className={`flex items-center gap-2.5 text-xs font-bold tracking-widest uppercase transition-colors ${step >= 1 ? 'text-white' : 'text-neutral-600'}`}>
-                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] ${step >= 1 ? 'bg-blue-600 text-white' : 'bg-neutral-900'}`}>1</span>
+            <div className="flex items-center gap-2 sm:gap-4 bg-neutral-950 border border-neutral-900 px-3.5 py-3 sm:px-6 sm:py-4 rounded-xl shrink-0 overflow-x-auto w-full md:w-auto justify-between sm:justify-start">
+              <div className={`flex items-center gap-1.5 sm:gap-2.5 text-[11px] sm:text-xs font-bold tracking-widest uppercase transition-colors ${step >= 1 ? 'text-white' : 'text-neutral-600'}`}>
+                <span className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-[10px] sm:text-[11px] shrink-0 ${step >= 1 ? 'bg-blue-600 text-white' : 'bg-neutral-900'}`}>1</span>
                 <span>Contact</span>
               </div>
-              <ChevronRight className="w-4 h-4 text-neutral-800" />
-              <div className={`flex items-center gap-2.5 text-xs font-bold tracking-widest uppercase transition-colors ${step >= 2 ? 'text-white' : 'text-neutral-600'}`}>
-                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] ${step >= 2 ? 'bg-blue-600 text-white' : 'bg-neutral-900'}`}>2</span>
+              <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-neutral-800 shrink-0" />
+              <div className={`flex items-center gap-1.5 sm:gap-2.5 text-[11px] sm:text-xs font-bold tracking-widest uppercase transition-colors ${step >= 2 ? 'text-white' : 'text-neutral-600'}`}>
+                <span className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-[10px] sm:text-[11px] shrink-0 ${step >= 2 ? 'bg-blue-600 text-white' : 'bg-neutral-900'}`}>2</span>
                 <span>Delivery</span>
               </div>
-              <ChevronRight className="w-4 h-4 text-neutral-800" />
-              <div className={`flex items-center gap-2.5 text-xs font-bold tracking-widest uppercase transition-colors ${step >= 3 ? 'text-white' : 'text-neutral-600'}`}>
-                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] ${step >= 3 ? 'bg-blue-600 text-white' : 'bg-neutral-900'}`}>3</span>
+              <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-neutral-800 shrink-0" />
+              <div className={`flex items-center gap-1.5 sm:gap-2.5 text-[11px] sm:text-xs font-bold tracking-widest uppercase transition-colors ${step >= 3 ? 'text-white' : 'text-neutral-600'}`}>
+                <span className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-[10px] sm:text-[11px] shrink-0 ${step >= 3 ? 'bg-blue-600 text-white' : 'bg-neutral-900'}`}>3</span>
                 <span>Payment</span>
               </div>
             </div>
@@ -312,11 +351,11 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
       )}
 
       {/* Main Grid: Form Inputs Left vs Order Summary Right */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 sm:py-12">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-12 items-start">
           
           {/* LEFT: Complete Checkout Actions Form */}
-          <div className="lg:col-span-7 bg-neutral-950 border border-neutral-900/60 p-8 sm:p-10 rounded-2xl">
+          <div className="lg:col-span-7 bg-neutral-950 border border-neutral-900/60 p-3.5 sm:p-8 md:p-10 rounded-2xl">
             <form onSubmit={handleNextStep} className="space-y-8">
               
               {/* STEP 1: CONTACT INFORMATION */}
@@ -517,94 +556,125 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
                     <p className="text-xs text-neutral-500 mt-1">Select your preferred payment processor.</p>
                   </div>
 
-                  <div className="w-full bg-black border border-neutral-900 text-white rounded-xl overflow-hidden flex min-h-[350px]">
+                  <div className="w-full bg-black border border-neutral-900 text-white rounded-xl overflow-hidden flex flex-row min-h-[360px]">
                     {/* Sidebar / Tabs */}
-                    <div className="w-1/3 bg-neutral-950 flex flex-col border-r border-neutral-900">
-                      <div className="p-4 border-b border-neutral-900 text-[10px] font-bold text-neutral-500 uppercase tracking-widest">
+                    <div className="w-36 sm:w-48 md:w-56 shrink-0 bg-neutral-950 flex flex-col border-r border-neutral-900">
+                      <div className="p-3 sm:p-4 border-b border-neutral-900 text-[10px] font-bold text-neutral-400 uppercase tracking-wider">
                         Pay With
                       </div>
-                      <div className="flex-1 flex flex-col">
+                      <div className="flex-1 flex flex-col divide-y divide-neutral-900/60">
                         {[
-                          { id: 'payonline', label: 'Pay Online (Card/Transfer)', icon: <CreditCard className="w-4 h-4" /> },
-                          ...(stateLocation === 'Lagos' && hasPastOrders ? [{ id: 'pod', label: 'Pay on Delivery', icon: <ShoppingBag className="w-4 h-4" /> }] : [])
+                          { 
+                            id: 'payonline', 
+                            title: 'Pay Online',
+                            subtitle: 'Card / Transfer', 
+                            icon: <CreditCard className="w-4 h-4 shrink-0" /> 
+                          },
+                          ...(stateLocation === 'Lagos' && hasPastOrders ? [{ 
+                            id: 'pod', 
+                            title: 'Pay on Delivery',
+                            subtitle: 'Cash / POS', 
+                            icon: <ShoppingBag className="w-4 h-4 shrink-0" /> 
+                          }] : [])
                         ].map(option => (
                            <button
                              key={option.id}
                              type="button"
                              onClick={() => setPaymentOption(option.id)}
-                             className={`flex items-center gap-3 px-4 py-4 text-sm font-medium transition-colors border-l-4 ${
+                             className={`flex items-start gap-2 sm:gap-3 p-3 sm:px-4 sm:py-3.5 text-left transition-colors border-l-4 ${
                                paymentOption === option.id
-                                 ? 'border-emerald-500 bg-black text-emerald-500'
-                                 : 'border-transparent text-neutral-500 hover:bg-neutral-900 hover:text-white'
+                                 ? 'border-emerald-500 bg-black text-emerald-400 font-semibold'
+                                 : 'border-transparent text-neutral-400 hover:bg-neutral-900/80 hover:text-white'
                              }`}
                            >
-                             <span className={paymentOption === option.id ? 'text-emerald-500' : 'text-neutral-500'}>
+                             <span className={`mt-0.5 ${paymentOption === option.id ? 'text-emerald-400' : 'text-neutral-500'}`}>
                                {option.icon}
                              </span>
-                             {option.label}
+                             <div className="flex flex-col min-w-0 flex-1">
+                               <span className="text-[11px] sm:text-xs font-bold leading-snug break-words">
+                                 {option.id === 'pod' ? (
+                                   <span className="flex flex-col sm:inline">
+                                     <span>Pay on</span>
+                                     <span className="sm:ml-1">Delivery</span>
+                                   </span>
+                                 ) : (
+                                   option.title
+                                 )}
+                               </span>
+                               <span className="text-[9px] sm:text-[10px] text-neutral-500 leading-tight mt-1">
+                                 {option.subtitle}
+                               </span>
+                             </div>
                            </button>
                         ))}
                       </div>
                       
                       {stateLocation === 'Lagos' && !hasPastOrders && (
-                        <div className="p-4 bg-orange-500/10 border-t border-orange-500/20 text-[9px] text-orange-400 font-medium leading-tight">
-                          * Pay on Delivery activates after your first successful purchase.
+                        <div className="p-2.5 sm:p-3 bg-orange-500/10 border-t border-orange-500/20 text-[9px] text-orange-400 font-medium leading-tight">
+                          * Pay on Delivery unlocks after your first purchase.
                         </div>
                       )}
                     </div>
 
                     {/* Right Content Pane */}
-                    <div className="w-2/3 p-6 flex flex-col bg-black">
-                      <div className="flex justify-between items-start mb-6">
-                         <div className="flex flex-col">
-                            <span className="text-[10px] text-neutral-500 uppercase tracking-widest">{emailAddress || 'guest@example.com'}</span>
-                            <span className="text-emerald-500 font-bold font-mono">Pay ₦{total.toLocaleString()}</span>
+                    <div className="flex-1 min-w-0 p-3.5 sm:p-6 flex flex-col justify-between bg-black">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 pb-3 mb-2 border-b border-neutral-900/80">
+                         <div className="flex flex-col min-w-0">
+                            <span className="text-[9px] sm:text-[10px] text-neutral-400 uppercase tracking-wider font-mono truncate max-w-[180px] sm:max-w-[240px]">{emailAddress || 'guest@example.com'}</span>
+                            <span className="text-emerald-400 font-bold font-mono text-sm sm:text-base">Pay ₦{total.toLocaleString()}</span>
                          </div>
+                         <span className="text-[8px] sm:text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono self-start sm:self-auto uppercase tracking-wider">
+                           Verified
+                         </span>
                       </div>
 
-                      <div className="flex-1">
+                      <div className="flex-1 flex flex-col justify-center items-center py-2 text-center">
                         {paymentOption === 'payonline' && (
-                          <div className="space-y-4 animate-in fade-in duration-300 text-center flex flex-col items-center justify-center h-full">
-                            <div className="w-12 h-12 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-500 mb-2">
-                               <CreditCard className="w-6 h-6" />
+                          <div className="w-full space-y-3 animate-in fade-in duration-300 flex flex-col items-center justify-center">
+                            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 shrink-0">
+                               <CreditCard className="w-5 h-5 sm:w-6 sm:h-6" />
                             </div>
-                            <h4 className="font-bold tracking-widest uppercase text-xs text-neutral-300">Pay Securely with Paystack</h4>
-                            <p className="text-xs text-neutral-500 max-w-[200px] leading-relaxed">
-                              Click the button below to open the secure Paystack checkout.
-                            </p>
+                            <div className="px-1">
+                              <h4 className="font-bold tracking-wider uppercase text-[11px] sm:text-xs text-neutral-200">Pay Securely with Paystack</h4>
+                              <p className="text-[10px] sm:text-xs text-neutral-400 max-w-[240px] mt-1 leading-snug mx-auto">
+                                Click the button below to open the secure Paystack checkout.
+                              </p>
+                            </div>
                             <button
                               type="submit"
-                              className="w-full mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 px-4 rounded-lg text-xs uppercase tracking-widest transition-colors shadow-none"
+                              className="w-full max-w-[240px] mt-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold py-2.5 sm:py-3.5 px-3 rounded-xl text-[11px] sm:text-xs uppercase tracking-wider transition-all shadow-lg shadow-blue-600/20 flex items-center justify-center gap-1.5"
                             >
-                              Pay ₦{total.toLocaleString()}
+                              <CreditCard className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                              <span className="truncate">Pay ₦{total.toLocaleString()}</span>
                             </button>
                           </div>
                         )}
 
-
-
                         {paymentOption === 'pod' && (
-                          <div className="space-y-4 animate-in fade-in duration-300 text-center flex flex-col items-center justify-center h-full">
-                            <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500 mb-2">
-                               <ShoppingBag className="w-6 h-6" />
+                          <div className="w-full space-y-3 animate-in fade-in duration-300 flex flex-col items-center justify-center">
+                            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                               <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
                             </div>
-                            <h4 className="font-bold tracking-widest uppercase text-xs text-neutral-300">Pay on Delivery</h4>
-                            <p className="text-xs text-neutral-500 max-w-[200px] leading-relaxed">
-                              You'll pay via cash or POS when your items arrive at your location.
-                            </p>
+                            <div className="px-1">
+                              <h4 className="font-bold tracking-wider uppercase text-[11px] sm:text-xs text-neutral-200">Pay on Delivery</h4>
+                              <p className="text-[10px] sm:text-xs text-neutral-400 max-w-[240px] mt-1 leading-snug mx-auto">
+                                You will pay via cash or POS upon delivery.
+                              </p>
+                            </div>
                             <button
                               type="submit"
-                              className="w-full mt-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 px-4 rounded-lg text-xs uppercase tracking-widest transition-colors shadow-none"
+                              className="w-full max-w-[240px] mt-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold py-2.5 sm:py-3.5 px-3 rounded-xl text-[11px] sm:text-xs uppercase tracking-wider transition-all shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-1.5"
                             >
-                              Confirm Order
+                              <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                              <span className="truncate">Confirm (₦{total.toLocaleString()})</span>
                             </button>
                           </div>
                         )}
                       </div>
                       
-                      <div className="mt-6 flex justify-center items-center gap-1 text-[10px] font-medium tracking-widest uppercase text-neutral-600">
-                        <Shield className="w-3 h-3" />
-                        Secured by <span className="font-bold text-white">paystack</span>
+                      <div className="mt-4 pt-2.5 border-t border-neutral-900/60 flex justify-center items-center gap-1 text-[9px] sm:text-[10px] font-medium tracking-wider uppercase text-neutral-400">
+                        <Shield className="w-3 h-3 text-blue-400 shrink-0" />
+                        <span>Secured by <span className="font-bold text-neutral-200">paystack</span></span>
                       </div>
                     </div>
                   </div>
@@ -649,7 +719,7 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
                   <li key={item.id} className="flex gap-4 p-3 bg-black/40 border border-neutral-900 rounded-xl">
                      <div className="w-16 h-16 bg-neutral-900 border border-neutral-800 shrink-0 relative rounded-lg flex items-center justify-center p-1">
                        {item.imageUrl ? (
-                         <img src={item.imageUrl} alt={item.name} className="max-h-full max-w-full object-contain rounded-md" />
+                         <img src={item.imageUrl} alt={item.name} referrerPolicy="no-referrer" className="max-h-full max-w-full object-contain rounded-md" />
                        ) : (
                          <span className="text-neutral-700 text-[10px] uppercase tracking-widest font-bold">No Img</span>
                        )}
@@ -679,7 +749,7 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
                         type="text"
                         value={couponCode}
                         onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
-                        placeholder="e.g. DISCOUNT20"
+                        placeholder="e.g. TZ-VIP-94820 OR DISCOUNT20"
                         className="flex-1 bg-black border border-neutral-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 transition-colors text-sm uppercase placeholder:normal-case font-mono"
                       />
                       <button 
@@ -690,6 +760,9 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
                         Apply
                       </button>
                     </div>
+                    <p className="text-[10px] text-cyan-400/80">
+                      ⚡ <strong>VIP Waitlist Members:</strong> Enter your VIP Pass ID or registered email for 7% Off + Free Delivery!
+                    </p>
                     {couponError && (
                       <p className="text-[11px] text-rose-500 flex items-center gap-1">
                         <AlertCircle className="w-3.5 h-3.5" /> {couponError}
@@ -701,7 +774,9 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
                     <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 px-4 py-2.5 rounded-lg text-emerald-400 text-xs">
                       <span className="font-mono font-bold tracking-wide uppercase">{appliedCoupon.code}</span>
                       <div className="flex items-center gap-2">
-                        <span className="font-semibold">{appliedCoupon.type === 'Percentage' ? `${appliedCoupon.value}% Off` : appliedCoupon.type === 'Fixed' ? `₦${appliedCoupon.value.toLocaleString()} Off` : 'Free Shipping'}</span>
+                        <span className="font-semibold">
+                          {appliedCoupon.isVipPass ? '7% VIP Off + Free Delivery' : appliedCoupon.type === 'Percentage' ? `${appliedCoupon.value}% Off` : appliedCoupon.type === 'Fixed' ? `₦${appliedCoupon.value.toLocaleString()} Off` : 'Free Shipping'}
+                        </span>
                         <button 
                           type="button" 
                           onClick={handleRemoveCoupon} 
@@ -735,10 +810,10 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
 
                 <div className="flex justify-between text-neutral-400">
                   <span>Inland Shipping</span>
-                  {appliedCoupon?.type === 'Shipping' ? (
+                  {appliedCoupon?.type === 'Shipping' || appliedCoupon?.freeShipping ? (
                     <div className="flex items-center gap-1.5">
                       <span className="text-neutral-500 line-through font-mono">₦{baseDeliveryFee.toLocaleString()}</span>
-                      <span className="text-emerald-400 font-bold uppercase text-[10px] tracking-wider">Free Shipping</span>
+                      <span className="text-emerald-400 font-bold uppercase text-[10px] tracking-wider">Free Launch Delivery</span>
                     </div>
                   ) : baseDeliveryFee > 0 ? (
                     <span className="text-white font-mono font-medium">₦{baseDeliveryFee.toLocaleString()}</span>

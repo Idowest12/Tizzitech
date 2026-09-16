@@ -24,6 +24,8 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "email": { "type": "string" },
         "items": { "type": "array" },
         "total": { "type": "number" },
         "status": { "type": "string", "enum": ["Pending", "Confirmed", "Processing", "Picked Up", "Delivered", "Cancelled"] },
@@ -32,14 +34,65 @@
       },
       "required": ["id", "items", "total", "status", "orderDate"]
     },
+    "User": {
+      "title": "User",
+      "description": "Registered customer profile.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "firstname": { "type": "string" },
+        "lastname": { "type": "string" },
+        "role": { "type": "string" },
+        "emailVerified": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "email"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Promotional discount codes.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "discountPercentage": { "type": "number" },
+        "status": { "type": "string" }
+      },
+      "required": ["code", "discountPercentage", "status"]
+    },
+    "SecurityLog": {
+      "title": "SecurityLog",
+      "description": "Security audit event log.",
+      "type": "object",
+      "properties": {
+        "eventType": { "type": "string" },
+        "severity": { "type": "string" },
+        "ip": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["eventType", "severity", "timestamp"]
+    },
+    "NewsletterSubscriber": {
+      "title": "NewsletterSubscriber",
+      "description": "Subscribers and VIP waitlist entries.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "status": { "type": "string" },
+        "subscribedAt": { "type": "string" }
+      },
+      "required": ["email", "status"]
+    },
     "Settings": {
       "title": "Settings",
-      "description": "Global store settings like categories and brands.",
+      "description": "Global store settings like categories, brands, and hero configuration.",
       "type": "object",
       "properties": {
         "categories": { "type": "array" },
         "brands": { "type": "array" },
-        "deliveryZones": { "type": "array" }
+        "deliveryZones": { "type": "array" },
+        "heroConfig": { "type": "object" }
       }
     }
   },
@@ -51,6 +104,26 @@
     "orders/{orderId}": {
       "schema": { "$ref": "#/entities/Order" },
       "description": "Customer orders."
+    },
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Customer account records."
+    },
+    "coupons/{couponId}": {
+      "schema": { "$ref": "#/entities/Coupon" },
+      "description": "Store discount coupons."
+    },
+    "audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/SecurityLog" },
+      "description": "Administrative and server audit trail."
+    },
+    "security_logs/{logId}": {
+      "schema": { "$ref": "#/entities/SecurityLog" },
+      "description": "Security events and abnormal traffic logs."
+    },
+    "newsletter_subscribers/{subId}": {
+      "schema": { "$ref": "#/entities/NewsletterSubscriber" },
+      "description": "Newsletter and waitlist subscriptions."
     },
     "settings/{settingId}": {
       "schema": { "$ref": "#/entities/Settings" },

@@ -1,11 +1,13 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Bell, Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, AlertCircle, XCircle, BarChart3, FileText, Map, Star, Sliders, MapPin, DollarSign, Eye } from 'lucide-react';
-import { Product, Order } from '../types';
+import { Bell, Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, AlertCircle, XCircle, BarChart3, FileText, Map as MapIcon, Star, Sliders, MapPin, DollarSign, Eye, Sparkles, CheckSquare, Square, Layers, RefreshCw, ArrowUpDown, Filter, Check, ListChecks, ArrowLeft, ArrowRight, Upload, Camera, Image as ImageIcon } from 'lucide-react';
+import { Product, Order, HeroConfig } from '../types';
+import { defaultHeroConfig } from '../data';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, AreaChart } from 'recharts';
 import { doc, getDoc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db, auth, logAuditActivity } from '../firebase';
 import { NewsletterAdmin } from './NewsletterAdmin';
 import { AdminManager } from './AdminManager';
+import { HeroBannersManager } from './HeroBannersManager';
 import { DashboardStatsSkeleton, TableRowsSkeleton, ChartSkeleton } from './Skeleton';
 
 interface AdminDashboardProps {
@@ -16,7 +18,10 @@ interface AdminDashboardProps {
   orders: Order[];
   onUpdateStock: (id: string, newStock: number) => void;
   onUpdateOrderStatus: (id: string, newStatus: string) => void;
+  onBatchUpdateStock?: (updates: { id: string; stock: number }[]) => Promise<void> | void;
+  onBatchUpdateOrderStatus?: (orderIds: string[], newStatus: string) => Promise<void> | void;
   onAddProduct: (newProduct: Product) => void;
+  onUpdateProduct?: (updatedProduct: Product) => void;
   onGoHome: () => void;
   onLogout: () => void;
   isLoading?: boolean;
@@ -26,7 +31,7 @@ interface AdminDashboardProps {
   onDeleteCoupon?: (code: string) => Promise<void>;
 }
 
-type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'newsletter' | 'admins' | 'audit-logs';
+type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'hero-banners' | 'newsletter' | 'admins' | 'audit-logs';
 
 export function AdminDashboard({ 
   products, 
@@ -36,7 +41,10 @@ export function AdminDashboard({
   auditLogs = [], 
   onUpdateStock, 
   onUpdateOrderStatus, 
+  onBatchUpdateStock,
+  onBatchUpdateOrderStatus,
   onAddProduct, 
+  onUpdateProduct,
   onGoHome, 
   onLogout, 
   isLoading = false,
@@ -123,8 +131,13 @@ export function AdminDashboard({
   const [promptConfig, setPromptConfig] = useState<{title: string, onConfirm: (val: string) => void} | null>(null);
   const [promptValue, setPromptValue] = useState('');
   const [newProductForm, setNewProductForm] = useState<Partial<Product>>({
-    name: '', brand: '', category: 'Laptops', price: 0, costPrice: 0, condition: 'New', stock: 0, imageUrl: '', description: ''
+    name: '', brand: '', category: 'Laptops', price: 0, costPrice: 0, condition: 'New', stock: 0, imageUrl: '', images: [], description: ''
   });
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editingProductForm, setEditingProductForm] = useState<Product | null>(null);
+  const [manualImageUrlInput, setManualImageUrlInput] = useState<string>('');
+  const [editManualImageUrlInput, setEditManualImageUrlInput] = useState<string>('');
+  const editFileInputRef = useRef<HTMLInputElement>(null);
 
   // Coupon management states
   const [showAddCouponModal, setShowAddCouponModal] = useState(false);
@@ -240,18 +253,53 @@ export function AdminDashboard({
   const [newBrand, setNewBrand] = useState('');
   const [newCondition, setNewCondition] = useState('');
   
+  // Hero slides & delivery ticker state
+  const [heroConfig, setHeroConfig] = useState<HeroConfig>(() => {
+    const saved = localStorage.getItem('tizzitech_hero_config');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && Array.isArray(parsed.slides)) {
+          const hasLegacyAi = parsed.slides.some((s: any) => s.title?.includes('ENGINEERED RIGHT'));
+          if (hasLegacyAi) {
+            localStorage.setItem('tizzitech_hero_config', JSON.stringify(defaultHeroConfig));
+            return defaultHeroConfig;
+          }
+          return parsed;
+        }
+      } catch (e) {}
+    }
+    return defaultHeroConfig;
+  });
+  
   React.useEffect(() => {
+    // 1. Fetch settings from newsletter_campaigns/global_settings (legacy)
     getDoc(doc(db, 'newsletter_campaigns', 'global_settings'))
       .then(snap => {
         if(snap.exists()) {
           const d = snap.data();
           if(d.brands) setBrands(d.brands);
-          if(d.categories) setConditions(d.categories); // Note: we are mapping conditions to categories for now or just keeping it simple
+          if(d.categories) setConditions(d.categories);
           if(d.deliveryZones) setDeliveryZones(d.deliveryZones);
         }
       })
       .catch(err => {
         console.warn("Could not fetch global settings in AdminDashboard (offline fallback enabled):", err);
+      });
+
+    // 2. Fetch heroConfig & settings from settings/global
+    getDoc(doc(db, 'settings', 'global'))
+      .then(snap => {
+        if (snap.exists()) {
+          const d = snap.data();
+          if (d.heroConfig) {
+            setHeroConfig(d.heroConfig);
+            localStorage.setItem('tizzitech_hero_config', JSON.stringify(d.heroConfig));
+          }
+        }
+      })
+      .catch(err => {
+        console.warn("Could not fetch settings/global in AdminDashboard:", err);
       });
   }, []);
   
@@ -260,6 +308,33 @@ export function AdminDashboard({
       await setDoc(doc(db, 'newsletter_campaigns', 'global_settings'), { brands: b || brands, categories: c || conditions, deliveryZones: z || deliveryZones }, { merge: true });
     } catch(e) {
       console.error(e);
+    }
+  };
+
+  const handleSaveHeroConfig = async (newConfig: HeroConfig) => {
+    setHeroConfig(newConfig);
+    localStorage.setItem('tizzitech_hero_config', JSON.stringify(newConfig));
+
+    // Save to Firestore
+    try {
+      await setDoc(doc(db, 'settings', 'global'), { heroConfig: newConfig }, { merge: true });
+    } catch (err) {
+      console.warn("Could not write directly to Firestore settings/global:", err);
+    }
+
+    // Also push to server endpoint to invalidate backend cache immediately
+    try {
+      const token = sessionStorage.getItem('tizzitech_admin_token') || '';
+      await fetch('/api/admin/hero-config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ heroConfig: newConfig })
+      });
+    } catch (err) {
+      console.warn("Could not push hero config to backend API:", err);
     }
   };
 
@@ -414,17 +489,10 @@ export function AdminDashboard({
     });
   };
 
-  const uploadFile = async (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      alert('Please select a valid image file');
-      return;
-    }
-
-    setIsUploading(true);
+  const uploadSingleFile = async (file: File): Promise<string | null> => {
+    if (!file.type.startsWith('image/')) return null;
     try {
       const compressedFile = await compressImage(file);
-      
-      // Convert to Base64 to bypass Vercel serverless limitations with multipart form data
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve, reject) => {
         reader.onload = () => resolve(reader.result as string);
@@ -434,7 +502,6 @@ export function AdminDashboard({
       const base64Data = await base64Promise;
 
       const token = sessionStorage.getItem('tizzitech_admin_token') || '';
-      
       const res = await fetch('/api/admin/upload-image', {
         method: 'POST',
         headers: {
@@ -443,33 +510,199 @@ export function AdminDashboard({
         },
         body: JSON.stringify({ image: base64Data })
       });
-      
-      if (!res.ok && res.headers.get('content-type')?.includes('text/html')) {
-          throw new Error('Server returned HTML. Vercel payload limit might be exceeded, or route crashed.');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.url) {
+          return data.url;
+        }
       }
-      
-      const data = await res.json();
-      if (data.success) {
-         setNewProductForm(prev => ({...prev, imageUrl: data.url}));
+    } catch (err) {
+      console.warn('Upload warning:', err);
+    }
+    return null;
+  };
+
+  const uploadFiles = async (files: FileList | File[], target: 'new' | 'edit' = 'new') => {
+    const list = Array.from(files).filter(f => f.type.startsWith('image/'));
+    if (list.length === 0) {
+      alert('Please select valid image files');
+      return;
+    }
+
+    setIsUploading(true);
+    const newUrls: string[] = [];
+    for (const file of list) {
+      const url = await uploadSingleFile(file);
+      if (url) {
+        newUrls.push(url);
+      }
+    }
+
+    if (newUrls.length > 0) {
+      if (target === 'new') {
+        setNewProductForm(prev => {
+          const current = prev.images && prev.images.length > 0 ? prev.images : (prev.imageUrl ? [prev.imageUrl] : []);
+          const updated = [...current, ...newUrls];
+          return {
+            ...prev,
+            imageUrl: updated[0] || '',
+            images: updated
+          };
+        });
       } else {
-         alert('Upload failed: ' + data.error);
+        setEditingProductForm(prev => {
+          if (!prev) return null;
+          const current = prev.images && prev.images.length > 0 ? prev.images : (prev.imageUrl ? [prev.imageUrl] : []);
+          const updated = [...current, ...newUrls];
+          return {
+            ...prev,
+            imageUrl: updated[0] || '',
+            images: updated
+          };
+        });
       }
-    } catch(err: any) {
-      alert('Upload error: ' + err.message + '. If using the preview, the file might still be too large.');
+    } else {
+      alert('Image server upload could not complete. You can also paste direct image URLs below.');
     }
     setIsUploading(false);
   };
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) await uploadFile(file);
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: 'new' | 'edit' = 'new') => {
+    if (e.target.files && e.target.files.length > 0) {
+      await uploadFiles(e.target.files, target);
+      e.target.value = '';
+    }
   };
 
-  const handleDrop = async (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent, target: 'new' | 'edit' = 'new') => {
     e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) await uploadFile(file);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await uploadFiles(e.dataTransfer.files, target);
+    }
   };
+
+  const handleAddManualUrl = (target: 'new' | 'edit' = 'new') => {
+    const url = (target === 'new' ? manualImageUrlInput : editManualImageUrlInput).trim();
+    if (!url) return;
+    if (target === 'new') {
+      setNewProductForm(prev => {
+        const current = prev.images && prev.images.length > 0 ? prev.images : (prev.imageUrl ? [prev.imageUrl] : []);
+        const updated = [...current, url];
+        return {
+          ...prev,
+          imageUrl: updated[0] || url,
+          images: updated
+        };
+      });
+      setManualImageUrlInput('');
+    } else {
+      setEditingProductForm(prev => {
+        if (!prev) return null;
+        const current = prev.images && prev.images.length > 0 ? prev.images : (prev.imageUrl ? [prev.imageUrl] : []);
+        const updated = [...current, url];
+        return {
+          ...prev,
+          imageUrl: updated[0] || url,
+          images: updated
+        };
+      });
+      setEditManualImageUrlInput('');
+    }
+  };
+
+  const handleRemoveImage = (index: number, target: 'new' | 'edit' = 'new') => {
+    if (target === 'new') {
+      setNewProductForm(prev => {
+        const current = [...(prev.images || (prev.imageUrl ? [prev.imageUrl] : []))];
+        current.splice(index, 1);
+        return {
+          ...prev,
+          imageUrl: current[0] || '',
+          images: current
+        };
+      });
+    } else {
+      setEditingProductForm(prev => {
+        if (!prev) return null;
+        const current = [...(prev.images || (prev.imageUrl ? [prev.imageUrl] : []))];
+        current.splice(index, 1);
+        return {
+          ...prev,
+          imageUrl: current[0] || '',
+          images: current
+        };
+      });
+    }
+  };
+
+  const handleSetPrimaryImage = (index: number, target: 'new' | 'edit' = 'new') => {
+    if (target === 'new') {
+      setNewProductForm(prev => {
+        const current = [...(prev.images || (prev.imageUrl ? [prev.imageUrl] : []))];
+        const [moved] = current.splice(index, 1);
+        current.unshift(moved);
+        return {
+          ...prev,
+          imageUrl: current[0] || '',
+          images: current
+        };
+      });
+    } else {
+      setEditingProductForm(prev => {
+        if (!prev) return null;
+        const current = [...(prev.images || (prev.imageUrl ? [prev.imageUrl] : []))];
+        const [moved] = current.splice(index, 1);
+        current.unshift(moved);
+        return {
+          ...prev,
+          imageUrl: current[0] || '',
+          images: current
+        };
+      });
+    }
+  };
+
+  const handleMoveImage = (index: number, direction: -1 | 1, target: 'new' | 'edit' = 'new') => {
+    if (target === 'new') {
+      setNewProductForm(prev => {
+        const current = [...(prev.images || (prev.imageUrl ? [prev.imageUrl] : []))];
+        const targetIdx = index + direction;
+        if (targetIdx < 0 || targetIdx >= current.length) return prev;
+        const temp = current[index];
+        current[index] = current[targetIdx];
+        current[targetIdx] = temp;
+        return {
+          ...prev,
+          imageUrl: current[0] || '',
+          images: current
+        };
+      });
+    } else {
+      setEditingProductForm(prev => {
+        if (!prev) return null;
+        const current = [...(prev.images || (prev.imageUrl ? [prev.imageUrl] : []))];
+        const targetIdx = index + direction;
+        if (targetIdx < 0 || targetIdx >= current.length) return prev;
+        const temp = current[index];
+        current[index] = current[targetIdx];
+        current[targetIdx] = temp;
+        return {
+          ...prev,
+          imageUrl: current[0] || '',
+          images: current
+        };
+      });
+    }
+  };
+
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [bulkStockInput, setBulkStockInput] = useState<string>('');
+  const [isBatchStockUpdating, setIsBatchStockUpdating] = useState<boolean>(false);
+  const [productStockFilter, setProductStockFilter] = useState<'all' | 'low' | 'out' | 'selected'>('all');
+
+  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  const [bulkOrderStatusSelect, setBulkOrderStatusSelect] = useState<string>('Accepted');
+  const [isBatchOrderUpdating, setIsBatchOrderUpdating] = useState<boolean>(false);
 
   const showEmailToast = (message: string) => {
     setEmailToast(message);
@@ -484,6 +717,100 @@ export function AdminDashboard({
       showEmailToast(`Email notification triggered successfully to customer: Order ${newStatus === 'In Transit' ? 'On Route' : newStatus}`);
     } else {
       showEmailToast(`Order status updated to ${newStatus}`);
+    }
+  };
+
+  // Product Selection Handlers
+  const handleToggleSelectProduct = (productId: string) => {
+    setSelectedProductIds(prev =>
+      prev.includes(productId) ? prev.filter(id => id !== productId) : [...prev, productId]
+    );
+  };
+
+  const handleSelectAllFilteredProducts = (checked: boolean) => {
+    if (checked) {
+      const visibleIds = filteredProducts.map(p => p.id);
+      setSelectedProductIds(prev => Array.from(new Set([...prev, ...visibleIds])));
+    } else {
+      const visibleIdsSet = new Set(filteredProducts.map(p => p.id));
+      setSelectedProductIds(prev => prev.filter(id => !visibleIdsSet.has(id)));
+    }
+  };
+
+  const handleApplyBatchStock = async (targetStock: number) => {
+    if (selectedProductIds.length === 0) return;
+    setIsBatchStockUpdating(true);
+    try {
+      const sanitizedStock = Math.max(0, targetStock);
+      const updates = selectedProductIds.map(id => ({ id, stock: sanitizedStock }));
+      if (onBatchUpdateStock) {
+        await onBatchUpdateStock(updates);
+      } else {
+        updates.forEach(u => onUpdateStock(u.id, u.stock));
+      }
+      showEmailToast(`Batch updated stock to ${sanitizedStock} units for ${updates.length} products.`);
+      setBulkStockInput('');
+    } catch (e: any) {
+      alert('Failed to batch update stock: ' + e.message);
+    } finally {
+      setIsBatchStockUpdating(false);
+    }
+  };
+
+  const handleApplyBatchStockDelta = async (delta: number) => {
+    if (selectedProductIds.length === 0) return;
+    setIsBatchStockUpdating(true);
+    try {
+      const pMap = new Map(products.map(p => [p.id, p]));
+      const updates = selectedProductIds.map(id => {
+        const curr = pMap.get(id)?.stock || 0;
+        return { id, stock: Math.max(0, curr + delta) };
+      });
+      if (onBatchUpdateStock) {
+        await onBatchUpdateStock(updates);
+      } else {
+        updates.forEach(u => onUpdateStock(u.id, u.stock));
+      }
+      showEmailToast(`Adjusted stock by ${delta > 0 ? `+${delta}` : delta} for ${updates.length} products.`);
+    } catch (e: any) {
+      alert('Failed to adjust stock: ' + e.message);
+    } finally {
+      setIsBatchStockUpdating(false);
+    }
+  };
+
+  // Order Selection Handlers
+  const handleToggleSelectOrder = (orderId: string) => {
+    setSelectedOrderIds(prev =>
+      prev.includes(orderId) ? prev.filter(id => id !== orderId) : [...prev, orderId]
+    );
+  };
+
+  const handleSelectAllFilteredOrders = (checked: boolean) => {
+    if (checked) {
+      const visibleIds = filteredOrders.map(o => o.id);
+      setSelectedOrderIds(prev => Array.from(new Set([...prev, ...visibleIds])));
+    } else {
+      const visibleIdsSet = new Set(filteredOrders.map(o => o.id));
+      setSelectedOrderIds(prev => prev.filter(id => !visibleIdsSet.has(id)));
+    }
+  };
+
+  const handleApplyBatchOrderStatus = async (newStatus: string) => {
+    if (selectedOrderIds.length === 0) return;
+    setIsBatchOrderUpdating(true);
+    try {
+      if (onBatchUpdateOrderStatus) {
+        await onBatchUpdateOrderStatus(selectedOrderIds, newStatus);
+      } else {
+        selectedOrderIds.forEach(id => onUpdateOrderStatus(id, newStatus));
+      }
+      showEmailToast(`Batch updated ${selectedOrderIds.length} orders to status "${newStatus}".`);
+      setSelectedOrderIds([]);
+    } catch (e: any) {
+      alert('Failed to batch update order status: ' + e.message);
+    } finally {
+      setIsBatchOrderUpdating(false);
     }
   };
 
@@ -503,11 +830,23 @@ export function AdminDashboard({
     }
     return true; // 'all'
   });
-  const filteredProducts = products.filter(p => 
-    (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
-    (p.brand || '').toLowerCase().includes(search.toLowerCase()) || 
-    (p.id || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredProducts = products.filter(p => {
+    const matches = (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
+      (p.brand || '').toLowerCase().includes(search.toLowerCase()) || 
+      (p.id || '').toLowerCase().includes(search.toLowerCase());
+    if (!matches) return false;
+
+    if (productStockFilter === 'low') return p.stock > 0 && p.stock <= 5;
+    if (productStockFilter === 'out') return p.stock === 0;
+    if (productStockFilter === 'selected') return selectedProductIds.includes(p.id);
+    return true;
+  });
+
+  const isAllFilteredProductsSelected = filteredProducts.length > 0 && filteredProducts.every(p => selectedProductIds.includes(p.id));
+  const isSomeFilteredProductsSelected = filteredProducts.some(p => selectedProductIds.includes(p.id)) && !isAllFilteredProductsSelected;
+
+  const isAllFilteredOrdersSelected = filteredOrders.length > 0 && filteredOrders.every(o => selectedOrderIds.includes(o.id));
+  const isSomeFilteredOrdersSelected = filteredOrders.some(o => selectedOrderIds.includes(o.id)) && !isAllFilteredOrdersSelected;
 
   const totalRevenue = orders.filter(o => o.status === 'Confirmed' || o.status === 'Processing' || o.status === 'Picked Up' || o.status === 'Delivered').reduce((sum, o) => sum + o.total, 0);
   const totalOrders = orders.length;
@@ -570,13 +909,14 @@ export function AdminDashboard({
           <NavItem tab="products" icon={Package} label="Products" />
           <NavItem tab="attributes" icon={Sliders} label="Brands & Conditions" />
           <NavItem tab="customers" icon={Users} label="Customers" />
-          <NavItem tab="delivery" icon={Map} label="Delivery Zones" />
+          <NavItem tab="delivery" icon={MapIcon} label="Delivery Zones" />
           
           <p className="px-2 text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-2 mt-6">Finance & Marketing</p>
+          <NavItem tab="hero-banners" icon={ImageIcon} label="Hero Slides & Marquee" />
           <NavItem tab="featured" icon={Star} label="Tech of the Day" />
           <NavItem tab="invoices" icon={FileText} label="Invoices" />
           <NavItem tab="discounts" icon={Tags} label="Coupons" />
-          <NavItem tab="newsletter" icon={Mail} label="Newsletter" />
+          <NavItem tab="newsletter" icon={Sparkles} label="VIP Waitlist & Broadcasts" />
           <NavItem tab="admins" icon={ShieldAlert} label="Administrators" />
           <NavItem tab="audit-logs" icon={ShieldAlert} label="Audit Logs" />
         </div>
@@ -807,7 +1147,7 @@ export function AdminDashboard({
                               <div className="flex items-center gap-3">
                                 <div className="h-8 w-8 bg-neutral-900 rounded overflow-hidden p-0.5 flex items-center justify-center shrink-0">
                                   {product.imageUrl ? (
-                                    <img src={product.imageUrl} alt={product.name} className="h-full w-full object-contain" />
+                                    <img src={product.imageUrl} alt={product.name} referrerPolicy="no-referrer" className="h-full w-full object-contain" />
                                   ) : (
                                     <Package className="h-4 w-4 text-neutral-600" />
                                   )}
@@ -994,48 +1334,132 @@ export function AdminDashboard({
                         </div>
                       </div>
                       <div>
-                        <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Product Image</label>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest">
+                            Product Images (Add 3+ for Sliding Gallery)
+                          </label>
+                          <span className="text-[11px] font-mono text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full">
+                            {(newProductForm.images?.length || (newProductForm.imageUrl ? 1 : 0))} image(s)
+                          </span>
+                        </div>
                         
                         <div 
-                          className={`w-full border-2 border-dashed ${isUploading ? 'border-blue-500 bg-blue-500/10' : 'border-neutral-700 hover:border-neutral-500 bg-neutral-900/50'} rounded-lg p-6 text-center transition-colors cursor-pointer flex flex-col items-center justify-center min-h-[120px]`}
+                          className={`w-full border-2 border-dashed ${isUploading ? 'border-blue-500 bg-blue-500/10' : 'border-neutral-700 hover:border-neutral-500 bg-neutral-900/50'} rounded-xl p-5 text-center transition-colors cursor-pointer flex flex-col items-center justify-center min-h-[110px]`}
                           onClick={() => !isUploading && fileInputRef.current?.click()}
                           onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                          onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (!isUploading) handleDrop(e); }}
+                          onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (!isUploading) handleDrop(e, 'new'); }}
                         >
                           <input 
                             type="file" 
                             ref={fileInputRef} 
                             className="hidden" 
+                            multiple
                             accept="image/*" 
-                            onChange={handleImageUpload} 
+                            onChange={(e) => handleImageUpload(e, 'new')} 
                           />
                           
                           {isUploading ? (
-                            <div className="flex flex-col items-center text-blue-500 animate-pulse">
-                              <span className="text-sm font-bold uppercase tracking-widest">Compressing & Uploading...</span>
-                            </div>
-                          ) : newProductForm.imageUrl ? (
-                            <div className="flex flex-col items-center">
-                              <img src={newProductForm.imageUrl} alt="Preview" className="h-20 object-contain mb-3 rounded border border-neutral-700" />
-                              <span className="text-[10px] text-neutral-400 font-mono break-all max-w-full px-4">{newProductForm.imageUrl}</span>
-                              <span className="text-xs text-blue-500 font-bold uppercase mt-2">Click or drag to replace</span>
+                            <div className="flex flex-col items-center text-blue-400 animate-pulse">
+                              <Upload className="w-7 h-7 mb-2 animate-bounce text-blue-400" />
+                              <span className="text-xs font-bold uppercase tracking-widest">Compressing & Uploading Images...</span>
                             </div>
                           ) : (
                             <div className="flex flex-col items-center text-neutral-400">
-                              <svg className="w-8 h-8 mb-2 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                              </svg>
-                              <span className="text-sm font-bold">Drag & Drop an image here</span>
-                              <span className="text-xs mt-1">or click to browse</span>
-                              <span className="text-[10px] mt-2 text-neutral-500 bg-neutral-900 px-2 py-1 rounded border border-neutral-800">Auto-compressed to bypass size limits</span>
+                              <Camera className="w-7 h-7 mb-2 text-neutral-400" />
+                              <span className="text-xs font-bold text-neutral-200">Drag & Drop multiple images here or click to browse</span>
+                              <span className="text-[10px] text-neutral-500 mt-1">Select 3, 4, 5+ files at once. Compressed automatically.</span>
                             </div>
                           )}
                         </div>
                         
-                        <div className="mt-2 flex gap-2 items-center">
-                          <span className="text-[10px] text-neutral-500 uppercase font-bold tracking-widest">Or enter URL manually:</span>
-                          <input type="text" value={newProductForm.imageUrl} onChange={e => setNewProductForm({...newProductForm, imageUrl: e.target.value})} className="flex-1 bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-white text-xs font-mono" placeholder="https://" />
+                        <div className="mt-2.5 flex gap-2 items-center">
+                          <input 
+                            type="text" 
+                            value={manualImageUrlInput} 
+                            onChange={e => setManualImageUrlInput(e.target.value)} 
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddManualUrl('new'); } }}
+                            className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500" 
+                            placeholder="Paste image URL (e.g. https://...)..." 
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleAddManualUrl('new')}
+                            className="bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-bold px-3 py-2 rounded-lg border border-neutral-700 flex items-center gap-1 shrink-0"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Add URL
+                          </button>
                         </div>
+
+                        {/* Images list */}
+                        {newProductForm.images && newProductForm.images.length > 0 && (
+                          <div className="mt-3 space-y-2">
+                            <div className="flex items-center justify-between text-[11px] text-neutral-400">
+                              <span>Image list (first image is default cover):</span>
+                              <span className="text-neutral-500">Total: {newProductForm.images.length}</span>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 max-h-56 overflow-y-auto p-2 bg-neutral-950/80 rounded-xl border border-neutral-900">
+                              {newProductForm.images.map((imgUrl, idx) => (
+                                <div key={idx} className="relative group/img bg-neutral-900 rounded-lg overflow-hidden border border-neutral-800 p-1 flex flex-col">
+                                  <div className="aspect-square w-full rounded overflow-hidden relative bg-black/40 flex items-center justify-center">
+                                    <img src={imgUrl} alt={`Product ${idx + 1}`} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                                    {idx === 0 && (
+                                      <span className="absolute top-1 left-1 bg-blue-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow">
+                                        COVER
+                                      </span>
+                                    )}
+                                    <span className="absolute bottom-1 right-1 bg-black/70 text-neutral-300 text-[9px] font-mono px-1 rounded">
+                                      #{idx + 1}
+                                    </span>
+                                  </div>
+                                  
+                                  <div className="flex items-center justify-between mt-1.5 pt-1 border-t border-neutral-800/80 px-0.5">
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        disabled={idx === 0}
+                                        onClick={() => handleMoveImage(idx, -1, 'new')}
+                                        className="p-1 hover:bg-neutral-800 rounded text-neutral-400 disabled:opacity-20"
+                                        title="Move left"
+                                      >
+                                        <ArrowLeft className="w-3 h-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={idx === newProductForm.images!.length - 1}
+                                        onClick={() => handleMoveImage(idx, 1, 'new')}
+                                        className="p-1 hover:bg-neutral-800 rounded text-neutral-400 disabled:opacity-20"
+                                        title="Move right"
+                                      >
+                                        <ArrowRight className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-1">
+                                      {idx !== 0 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleSetPrimaryImage(idx, 'new')}
+                                          className="text-[9px] font-bold text-blue-400 hover:text-blue-300 px-1 py-0.5 rounded hover:bg-blue-500/10"
+                                          title="Set as cover image"
+                                        >
+                                          Cover
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveImage(idx, 'new')}
+                                        className="p-1 hover:bg-red-500/20 text-neutral-400 hover:text-red-400 rounded transition-colors"
+                                        title="Remove image"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                       <div>
                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Description</label>
@@ -1043,18 +1467,26 @@ export function AdminDashboard({
                       </div>
                       <button 
                         onClick={() => {
-                          if (newProductForm.name.trim() !== "" && newProductForm.price >= 0) {
+                          if (newProductForm.name && newProductForm.name.trim() !== "" && (newProductForm.price ?? 0) >= 0) {
+                            const rawImages = newProductForm.images && newProductForm.images.length > 0
+                              ? newProductForm.images
+                              : (newProductForm.imageUrl ? [newProductForm.imageUrl] : []);
+                            const cover = rawImages[0] || newProductForm.imageUrl || '';
+
                             onAddProduct({
                               ...newProductForm,
+                              imageUrl: cover,
+                              images: rawImages,
                               id: `p_${Date.now()}`,
                               specs: {},
                               reviews: []
                             } as Product);
                             setShowAddProduct(false);
-                            setNewProductForm({name: '', brand: '', category: 'Laptops', price: 0, costPrice: 0, condition: 'New', stock: 0, imageUrl: '', description: ''});
+                            setNewProductForm({name: '', brand: '', category: 'Laptops', price: 0, costPrice: 0, condition: 'New', stock: 0, imageUrl: '', images: [], description: ''});
+                            setManualImageUrlInput('');
                           }
                         }}
-                        className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-500"
+                        className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-500 transition-colors"
                       >
                         Submit Product
                       </button>
@@ -1063,8 +1495,235 @@ export function AdminDashboard({
                 </div>
               )}
 
-              <div className="mb-6 max-w-md">
-                <div className="relative">
+              {/* EDIT PRODUCT MODAL */}
+              {editingProductForm && (
+                <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+                  <div className="bg-neutral-950 border border-neutral-900 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl relative">
+                    <button onClick={() => { setEditingProduct(null); setEditingProductForm(null); }} className="absolute top-6 right-6 text-neutral-500 hover:text-white"><XCircle className="h-6 w-6" /></button>
+                    <div className="flex items-center gap-2 mb-6">
+                      <h2 className="text-xl font-bold text-white">Edit Product & Images</h2>
+                      <span className="text-xs font-mono text-neutral-500 bg-neutral-900 px-2 py-0.5 rounded border border-neutral-800">{editingProductForm.id}</span>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="col-span-1">
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Product Name</label>
+                          <input type="text" value={editingProductForm.name} onChange={e => setEditingProductForm({...editingProductForm, name: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Selling Price (₦)</label>
+                          <input type="number" value={editingProductForm.price} onChange={e => setEditingProductForm({...editingProductForm, price: Number(e.target.value)})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white font-mono" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Cost Price (₦)</label>
+                          <input type="number" value={editingProductForm.costPrice || 0} onChange={e => setEditingProductForm({...editingProductForm, costPrice: Number(e.target.value)})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white font-mono" />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Brand</label>
+                          <select value={editingProductForm.brand} onChange={e => setEditingProductForm({...editingProductForm, brand: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white">
+                            <option value="">Select Brand</option>
+                            {brands.map(b => <option key={b} value={b}>{b}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Condition</label>
+                          <select value={editingProductForm.condition} onChange={e => setEditingProductForm({...editingProductForm, condition: e.target.value as any})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white">
+                            <option value="">Select Condition</option>
+                            {conditions.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Category</label>
+                          <input type="text" value={editingProductForm.category} onChange={e => setEditingProductForm({...editingProductForm, category: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Current Stock</label>
+                          <input type="number" value={editingProductForm.stock} onChange={e => setEditingProductForm({...editingProductForm, stock: Number(e.target.value)})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white font-mono" />
+                        </div>
+                      </div>
+
+                      {/* Multiple Images Section for Edit */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest">
+                            Product Images ({editingProductForm.images?.length || (editingProductForm.imageUrl ? 1 : 0)} Total)
+                          </label>
+                          <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                            Slide gallery active
+                          </span>
+                        </div>
+                        
+                        <div 
+                          className={`w-full border-2 border-dashed ${isUploading ? 'border-blue-500 bg-blue-500/10' : 'border-neutral-700 hover:border-neutral-500 bg-neutral-900/50'} rounded-xl p-5 text-center transition-colors cursor-pointer flex flex-col items-center justify-center min-h-[110px]`}
+                          onClick={() => !isUploading && editFileInputRef.current?.click()}
+                          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                          onDrop={(e) => { e.preventDefault(); e.stopPropagation(); if (!isUploading) handleDrop(e, 'edit'); }}
+                        >
+                          <input 
+                            type="file" 
+                            ref={editFileInputRef} 
+                            className="hidden" 
+                            multiple
+                            accept="image/*" 
+                            onChange={(e) => handleImageUpload(e, 'edit')} 
+                          />
+                          
+                          {isUploading ? (
+                            <div className="flex flex-col items-center text-blue-400 animate-pulse">
+                              <Upload className="w-7 h-7 mb-2 animate-bounce text-blue-400" />
+                              <span className="text-xs font-bold uppercase tracking-widest">Uploading New Images...</span>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center text-neutral-400">
+                              <Camera className="w-7 h-7 mb-2 text-neutral-400" />
+                              <span className="text-xs font-bold text-neutral-200">Add more images (Drag & Drop or click)</span>
+                              <span className="text-[10px] text-neutral-500 mt-1">Can upload multiple images at once</span>
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="mt-2.5 flex gap-2 items-center">
+                          <input 
+                            type="text" 
+                            value={editManualImageUrlInput} 
+                            onChange={e => setEditManualImageUrlInput(e.target.value)} 
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddManualUrl('edit'); } }}
+                            className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500" 
+                            placeholder="Paste additional image URL (https://...)..." 
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleAddManualUrl('edit')}
+                            className="bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-bold px-3 py-2 rounded-lg border border-neutral-700 flex items-center gap-1 shrink-0"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Add URL
+                          </button>
+                        </div>
+
+                        {/* Images list for editing */}
+                        {editingProductForm.images && editingProductForm.images.length > 0 && (
+                          <div className="mt-3 space-y-2">
+                            <div className="flex items-center justify-between text-[11px] text-neutral-400">
+                              <span>Drag or use arrows to reorder. First image is the primary storefront cover.</span>
+                              <span className="text-neutral-500">Count: {editingProductForm.images.length}</span>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 max-h-56 overflow-y-auto p-2 bg-neutral-950/80 rounded-xl border border-neutral-900">
+                              {editingProductForm.images.map((imgUrl, idx) => (
+                                <div key={idx} className="relative group/img bg-neutral-900 rounded-lg overflow-hidden border border-neutral-800 p-1 flex flex-col">
+                                  <div className="aspect-square w-full rounded overflow-hidden relative bg-black/40 flex items-center justify-center">
+                                    <img src={imgUrl} alt={`Product ${idx + 1}`} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                                    {idx === 0 && (
+                                      <span className="absolute top-1 left-1 bg-blue-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow">
+                                        COVER
+                                      </span>
+                                    )}
+                                    <span className="absolute bottom-1 right-1 bg-black/70 text-neutral-300 text-[9px] font-mono px-1 rounded">
+                                      #{idx + 1}
+                                    </span>
+                                  </div>
+                                  
+                                  <div className="flex items-center justify-between mt-1.5 pt-1 border-t border-neutral-800/80 px-0.5">
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        disabled={idx === 0}
+                                        onClick={() => handleMoveImage(idx, -1, 'edit')}
+                                        className="p-1 hover:bg-neutral-800 rounded text-neutral-400 disabled:opacity-20"
+                                        title="Move left"
+                                      >
+                                        <ArrowLeft className="w-3 h-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={idx === editingProductForm.images!.length - 1}
+                                        onClick={() => handleMoveImage(idx, 1, 'edit')}
+                                        className="p-1 hover:bg-neutral-800 rounded text-neutral-400 disabled:opacity-20"
+                                        title="Move right"
+                                      >
+                                        <ArrowRight className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-1">
+                                      {idx !== 0 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleSetPrimaryImage(idx, 'edit')}
+                                          className="text-[9px] font-bold text-blue-400 hover:text-blue-300 px-1 py-0.5 rounded hover:bg-blue-500/10"
+                                          title="Set as cover image"
+                                        >
+                                          Cover
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveImage(idx, 'edit')}
+                                        className="p-1 hover:bg-red-500/20 text-neutral-400 hover:text-red-400 rounded transition-colors"
+                                        title="Remove image"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div>
+                         <label className="block text-xs font-bold text-neutral-400 uppercase tracking-widest mb-1">Description</label>
+                         <textarea value={editingProductForm.description} onChange={e => setEditingProductForm({...editingProductForm, description: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded px-3 py-2 text-white h-24 resize-none"></textarea>
+                      </div>
+
+                      <div className="flex gap-3 pt-2">
+                        <button 
+                          onClick={() => { setEditingProduct(null); setEditingProductForm(null); }}
+                          className="flex-1 bg-neutral-800 text-neutral-300 font-bold py-3 rounded-lg hover:bg-neutral-700 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button 
+                          onClick={() => {
+                            if (editingProductForm && editingProductForm.name.trim() !== "") {
+                              const rawImages = editingProductForm.images && editingProductForm.images.length > 0
+                                ? editingProductForm.images
+                                : (editingProductForm.imageUrl ? [editingProductForm.imageUrl] : []);
+                              const cover = rawImages[0] || editingProductForm.imageUrl || '';
+
+                              const updated = {
+                                ...editingProductForm,
+                                imageUrl: cover,
+                                images: rawImages
+                              };
+                              if (onUpdateProduct) {
+                                onUpdateProduct(updated);
+                              }
+                              setEditingProduct(null);
+                              setEditingProductForm(null);
+                              setEditManualImageUrlInput('');
+                            }
+                          }}
+                          className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-500 transition-colors"
+                        >
+                          Save Changes
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                <div className="relative w-full max-w-md">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
                   <input
                     type="text"
@@ -1074,12 +1733,149 @@ export function AdminDashboard({
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
+
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
+                  <button
+                    onClick={() => setProductStockFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${productStockFilter === 'all' ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-white hover:bg-neutral-900'}`}
+                  >
+                    All ({products.length})
+                  </button>
+                  <button
+                    onClick={() => setProductStockFilter('low')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${productStockFilter === 'low' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-neutral-400 hover:text-white hover:bg-neutral-900'}`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                    Low Stock ({lowStockProducts})
+                  </button>
+                  <button
+                    onClick={() => setProductStockFilter('out')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${productStockFilter === 'out' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'text-neutral-400 hover:text-white hover:bg-neutral-900'}`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                    Out of Stock ({outOfStockProducts})
+                  </button>
+                  {selectedProductIds.length > 0 && (
+                    <button
+                      onClick={() => setProductStockFilter('selected')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${productStockFilter === 'selected' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' : 'text-neutral-400 hover:text-white hover:bg-neutral-900'}`}
+                    >
+                      <Layers className="h-3 w-3 text-blue-400" />
+                      Selected ({selectedProductIds.length})
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {/* BATCH STOCK UPDATE TOOLBAR */}
+              {selectedProductIds.length > 0 && (
+                <div className="mb-6 bg-gradient-to-r from-blue-950/40 via-neutral-900/90 to-blue-950/30 border border-blue-500/30 rounded-2xl p-4 shadow-lg backdrop-blur-md animate-in fade-in slide-in-from-top-2">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="h-9 w-9 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                        <Layers className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-white">
+                            {selectedProductIds.length} {selectedProductIds.length === 1 ? 'Product' : 'Products'} Selected
+                          </span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-mono">
+                            Bulk Edit
+                          </span>
+                        </div>
+                        <p className="text-xs text-neutral-400 mt-0.5">Apply atomic stock adjustments or set fixed inventory across all selected items.</p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-1 bg-neutral-900/80 p-1 rounded-xl border border-neutral-800">
+                        <span className="text-[10px] font-bold uppercase text-neutral-400 px-2">Quick Add:</span>
+                        <button
+                          disabled={isBatchStockUpdating}
+                          onClick={() => handleApplyBatchStockDelta(10)}
+                          className="px-2.5 py-1 text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-blue-300 rounded-lg transition-colors font-mono disabled:opacity-50"
+                        >
+                          +10
+                        </button>
+                        <button
+                          disabled={isBatchStockUpdating}
+                          onClick={() => handleApplyBatchStockDelta(25)}
+                          className="px-2.5 py-1 text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-blue-300 rounded-lg transition-colors font-mono disabled:opacity-50"
+                        >
+                          +25
+                        </button>
+                        <button
+                          disabled={isBatchStockUpdating}
+                          onClick={() => handleApplyBatchStockDelta(50)}
+                          className="px-2.5 py-1 text-xs font-bold bg-neutral-800 hover:bg-neutral-700 text-blue-300 rounded-lg transition-colors font-mono disabled:opacity-50"
+                        >
+                          +50
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 bg-neutral-900/80 p-1 rounded-xl border border-neutral-800">
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="Qty"
+                          value={bulkStockInput}
+                          onChange={(e) => setBulkStockInput(e.target.value)}
+                          className="w-16 bg-neutral-950 border border-neutral-700 rounded-lg px-2 py-1 text-xs text-white font-mono text-center focus:outline-none focus:border-blue-500"
+                        />
+                        <button
+                          disabled={isBatchStockUpdating || bulkStockInput === ''}
+                          onClick={() => handleApplyBatchStock(parseInt(bulkStockInput) || 0)}
+                          className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors disabled:opacity-40"
+                        >
+                          {isBatchStockUpdating ? 'Applying...' : 'Set Stock'}
+                        </button>
+                        <button
+                          disabled={isBatchStockUpdating || bulkStockInput === ''}
+                          onClick={() => handleApplyBatchStockDelta(parseInt(bulkStockInput) || 0)}
+                          className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-bold rounded-lg transition-colors disabled:opacity-40"
+                          title="Add entered quantity to existing stock"
+                        >
+                          + Add
+                        </button>
+                      </div>
+
+                      <button
+                        disabled={isBatchStockUpdating}
+                        onClick={() => handleApplyBatchStock(0)}
+                        className="px-2.5 py-1.5 text-xs font-bold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl transition-colors disabled:opacity-50"
+                        title="Mark selected products as out of stock"
+                      >
+                        Set to 0
+                      </button>
+
+                      <button
+                        onClick={() => setSelectedProductIds([])}
+                        className="px-3 py-1.5 text-xs font-bold text-neutral-400 hover:text-white hover:bg-neutral-800/80 rounded-xl transition-colors"
+                      >
+                        Deselect All
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="bg-neutral-950 border border-neutral-900 rounded-2xl overflow-hidden shadow-sm">
                 <table className="w-full text-left">
                   <thead className="bg-neutral-900/50 border-b border-neutral-900">
                     <tr>
+                      <th className="py-4 px-4 w-12 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isAllFilteredProductsSelected}
+                          ref={el => {
+                            if (el) el.indeterminate = isSomeFilteredProductsSelected;
+                          }}
+                          onChange={(e) => handleSelectAllFilteredProducts(e.target.checked)}
+                          className="rounded border-neutral-700 bg-neutral-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-neutral-950 cursor-pointer h-4 w-4"
+                          title="Select / Deselect all visible products"
+                        />
+                      </th>
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Product</th>
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Price</th>
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Status</th>
@@ -1089,22 +1885,44 @@ export function AdminDashboard({
                   </thead>
                   <tbody className="divide-y divide-neutral-900/50">
                     {isLoading ? (
-                      <TableRowsSkeleton cols={5} rows={6} />
+                      <TableRowsSkeleton cols={6} rows={6} />
+                    ) : filteredProducts.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-12 text-center text-neutral-500 text-sm">No products found matching your query.</td>
+                      </tr>
                     ) : (
-                      filteredProducts.map((product) => (
-                        <tr key={product.id} className="hover:bg-neutral-900/30 transition-colors">
+                      filteredProducts.map((product) => {
+                        const isSelected = selectedProductIds.includes(product.id);
+                        return (
+                        <tr key={product.id} className={`transition-colors ${isSelected ? 'bg-blue-950/20 border-l-2 border-blue-500' : 'hover:bg-neutral-900/30'}`}>
+                          <td className="py-4 px-4 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleToggleSelectProduct(product.id)}
+                              className="rounded border-neutral-700 bg-neutral-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-neutral-950 cursor-pointer h-4 w-4"
+                            />
+                          </td>
                           <td className="py-4 px-6">
                             <div className="flex items-center gap-4">
                               <div className="h-12 w-12 bg-neutral-900 rounded-lg shrink-0 overflow-hidden border border-neutral-800 p-1 flex items-center justify-center text-[10px] text-neutral-600">
                                 {product.imageUrl ? (
-                                  <img src={product.imageUrl} alt={product.name} className="h-full w-full object-contain" />
+                                  <img src={product.images?.[0] || product.imageUrl} alt={product.name} referrerPolicy="no-referrer" className="h-full w-full object-contain" />
                                 ) : (
                                   <span>No Img</span>
                                 )}
                               </div>
                               <div>
-                                <p className="font-bold text-white text-sm">{product.name}</p>
-                                <p className="text-xs text-neutral-500 mt-1">ID: {product.id}</p>
+                                <div className="flex items-center gap-2">
+                                  <p className="font-bold text-white text-sm">{product.name}</p>
+                                  {product.images && product.images.length > 1 && (
+                                    <span className="inline-flex items-center gap-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full text-[10px] font-mono">
+                                      <Camera className="w-2.5 h-2.5" />
+                                      {product.images.length} imgs
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-neutral-500 mt-1">ID: {product.id} • {product.brand}</p>
                               </div>
                             </div>
                           </td>
@@ -1158,12 +1976,27 @@ export function AdminDashboard({
                             </div>
                           </td>
                           <td className="py-4 px-6 text-right">
-                            <button disabled className="p-2 text-neutral-500 hover:text-white transition-colors cursor-not-allowed opacity-50" title="Edit (Disabled in mock)">
+                            <button 
+                              onClick={() => {
+                                setEditingProduct(product);
+                                const existingImgs = product.images && product.images.length > 0
+                                  ? [...product.images]
+                                  : (product.imageUrl ? [product.imageUrl] : []);
+                                setEditingProductForm({
+                                  ...product,
+                                  imageUrl: existingImgs[0] || product.imageUrl,
+                                  images: existingImgs
+                                });
+                              }}
+                              className="p-2 text-neutral-400 hover:text-blue-400 hover:bg-neutral-900 rounded-lg transition-colors" 
+                              title="Edit Product & Manage Images"
+                            >
                               <Edit2 className="h-4 w-4" />
                             </button>
                           </td>
                         </tr>
-                      ))
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1257,10 +2090,111 @@ export function AdminDashboard({
                 </div>
               </div>
 
+              {/* BATCH ORDER STATUS UPDATE TOOLBAR */}
+              {selectedOrderIds.length > 0 && (
+                <div className="mb-6 bg-gradient-to-r from-indigo-950/40 via-neutral-900/90 to-purple-950/30 border border-indigo-500/30 rounded-2xl p-4 shadow-lg backdrop-blur-md animate-in fade-in slide-in-from-top-2">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="h-9 w-9 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
+                        <ListChecks className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-white">
+                            {selectedOrderIds.length} {selectedOrderIds.length === 1 ? 'Order' : 'Orders'} Selected
+                          </span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono">
+                            Bulk Action
+                          </span>
+                        </div>
+                        <p className="text-xs text-neutral-400 mt-0.5">Execute atomic order status transitions and trigger branded customer notification emails.</p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-1.5 bg-neutral-900/80 p-1 rounded-xl border border-neutral-800">
+                        <select
+                          value={bulkOrderStatusSelect}
+                          onChange={(e) => setBulkOrderStatusSelect(e.target.value)}
+                          className="bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+                        >
+                          <option value="Accepted">Accepted (Send Notification)</option>
+                          <option value="In Transit">In Transit (On Route)</option>
+                          <option value="Picked Up">Ready for Pickup</option>
+                          <option value="Delivered">Delivered</option>
+                          <option value="Cancelled">Cancelled</option>
+                        </select>
+                        <button
+                          disabled={isBatchOrderUpdating}
+                          onClick={() => handleApplyBatchOrderStatus(bulkOrderStatusSelect)}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors disabled:opacity-40"
+                        >
+                          {isBatchOrderUpdating ? 'Updating...' : 'Apply Status'}
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          disabled={isBatchOrderUpdating}
+                          onClick={() => handleApplyBatchOrderStatus('Accepted')}
+                          className="px-2.5 py-1.5 text-xs font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20 rounded-xl transition-colors disabled:opacity-50"
+                          title="Accept all selected orders"
+                        >
+                          Accept
+                        </button>
+                        <button
+                          disabled={isBatchOrderUpdating}
+                          onClick={() => handleApplyBatchOrderStatus('In Transit')}
+                          className="px-2.5 py-1.5 text-xs font-bold bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 rounded-xl transition-colors disabled:opacity-50"
+                          title="Mark selected orders as on route"
+                        >
+                          Set Route
+                        </button>
+                        <button
+                          disabled={isBatchOrderUpdating}
+                          onClick={() => handleApplyBatchOrderStatus('Delivered')}
+                          className="px-2.5 py-1.5 text-xs font-bold bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/20 rounded-xl transition-colors disabled:opacity-50"
+                          title="Mark selected orders as delivered"
+                        >
+                          Deliver
+                        </button>
+                        <button
+                          disabled={isBatchOrderUpdating}
+                          onClick={() => handleApplyBatchOrderStatus('Cancelled')}
+                          className="px-2.5 py-1.5 text-xs font-bold bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 rounded-xl transition-colors disabled:opacity-50"
+                          title="Cancel selected orders"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={() => setSelectedOrderIds([])}
+                        className="px-3 py-1.5 text-xs font-bold text-neutral-400 hover:text-white hover:bg-neutral-800/80 rounded-xl transition-colors"
+                      >
+                        Deselect All
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="bg-neutral-950 border border-neutral-900 rounded-2xl overflow-hidden shadow-sm">
                 <table className="w-full text-left">
                   <thead className="bg-neutral-900/50 border-b border-neutral-900">
                     <tr>
+                      <th className="py-4 px-4 w-12 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isAllFilteredOrdersSelected}
+                          ref={el => {
+                            if (el) el.indeterminate = isSomeFilteredOrdersSelected;
+                          }}
+                          onChange={(e) => handleSelectAllFilteredOrders(e.target.checked)}
+                          className="rounded border-neutral-700 bg-neutral-900 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-neutral-950 cursor-pointer h-4 w-4"
+                          title="Select / Deselect all visible orders"
+                        />
+                      </th>
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Order ID & Date</th>
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Customer / Address</th>
                       <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Items & Total</th>
@@ -1270,13 +2204,23 @@ export function AdminDashboard({
                   </thead>
                   <tbody className="divide-y divide-neutral-900/50">
                     {isLoading ? (
-                      <TableRowsSkeleton cols={5} rows={6} />
+                      <TableRowsSkeleton cols={6} rows={6} />
                     ) : filteredOrders.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="py-12 text-center text-neutral-500 text-sm">No orders found.</td>
+                        <td colSpan={6} className="py-12 text-center text-neutral-500 text-sm">No orders found.</td>
                       </tr>
-                    ) : filteredOrders.map((order) => (
-                      <tr key={order.id} className="hover:bg-neutral-900/30 transition-colors">
+                    ) : filteredOrders.map((order) => {
+                      const isSelected = selectedOrderIds.includes(order.id);
+                      return (
+                      <tr key={order.id} className={`transition-colors ${isSelected ? 'bg-indigo-950/20 border-l-2 border-indigo-500' : 'hover:bg-neutral-900/30'}`}>
+                        <td className="py-4 px-4 text-center">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => handleToggleSelectOrder(order.id)}
+                            className="rounded border-neutral-700 bg-neutral-900 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-neutral-950 cursor-pointer h-4 w-4"
+                          />
+                        </td>
                         <td className="py-4 px-6">
                            <p className="font-mono text-sm font-bold text-blue-400">{order.id}</p>
                            <p className="text-xs text-neutral-500 mt-1">{new Date(order.orderDate).toLocaleDateString()}</p>
@@ -1357,7 +2301,8 @@ export function AdminDashboard({
                            )}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1558,6 +2503,14 @@ export function AdminDashboard({
                 </form>
               </div>
             </div>
+          )}
+
+          {/* HERO BANNERS & DELIVERY TICKER TAB */}
+          {activeTab === 'hero-banners' && (
+            <HeroBannersManager
+              initialConfig={heroConfig}
+              onSaveConfig={handleSaveHeroConfig}
+            />
           )}
 
           {/* FEATURED / TECH OF THE DAY TAB */}
@@ -2477,7 +3430,7 @@ export function AdminDashboard({
                      
                      <div className="absolute bottom-4 right-4 bg-neutral-950/90 backdrop-blur border border-neutral-800 p-3 rounded-xl flex items-center gap-3 shadow-2xl z-10">
                         <div className="h-10 w-10 bg-neutral-900 rounded-lg flex items-center justify-center text-blue-500">
-                           <Map className="h-5 w-5" />
+                           <MapIcon className="h-5 w-5" />
                         </div>
                         <div>
                            <p className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider">Distance (Est.)</p>
@@ -2577,7 +3530,7 @@ export function AdminDashboard({
                         <div key={idx} className="flex justify-between items-center bg-neutral-900/20 p-3 rounded-lg border border-neutral-900/50">
                           <div className="flex items-center gap-3">
                             <div className="h-10 w-10 bg-neutral-800 rounded flex items-center justify-center p-1">
-                              {productRef.imageUrl ? <img src={productRef.imageUrl} alt={productRef.name || 'Product'} className="max-h-full object-contain" /> : <Package className="h-4 w-4 text-neutral-500" />}
+                              {productRef.imageUrl ? <img src={productRef.imageUrl} alt={productRef.name || 'Product'} referrerPolicy="no-referrer" className="max-h-full object-contain" /> : <Package className="h-4 w-4 text-neutral-500" />}
                             </div>
                             <div>
                               <p className="text-sm text-white font-bold">{productRef.name || 'Unknown Product'}</p>

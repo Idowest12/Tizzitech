@@ -1,55 +1,220 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
   <defs>
-    <!-- Dark gradient background for standalone viewing, but we'll make the background transparent for use in the app -->
-    <linearGradient id="t-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1E3A8A" />
-      <stop offset="40%" stop-color="#3B82F6" />
-      <stop offset="60%" stop-color="#06B6D4" />
-      <stop offset="100%" stop-color="#3B82F6" />
+    <!-- Neon Blue and Cyan Gradients -->
+    <linearGradient id="tt-blue-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="40%" stop-color="#0284C7" />
+      <stop offset="80%" stop-color="#0369A1" />
+      <stop offset="100%" stop-color="#0C4A6E" />
     </linearGradient>
-    <linearGradient id="accent-gradient" x1="0%" y1="100%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#8B5CF6" />
-      <stop offset="100%" stop-color="#3B82F6" />
+
+    <linearGradient id="tt-chrome-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="35%" stop-color="#E2E8F0" />
+      <stop offset="70%" stop-color="#94A3B8" />
+      <stop offset="100%" stop-color="#64748B" />
     </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="5" result="blur" />
-      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+
+    <linearGradient id="tt-glow-ring" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00E5FF" stop-opacity="0.9" />
+      <stop offset="50%" stop-color="#0091FF" stop-opacity="1" />
+      <stop offset="100%" stop-color="#0066FF" stop-opacity="0.8" />
+    </linearGradient>
+
+    <linearGradient id="text-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="60%" stop-color="#E0F2FE" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+
+    <!-- Filters for Neon Glow -->
+    <filter id="neon-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="ring-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
     </filter>
   </defs>
 
-  <g transform="translate(100, 40)">
-    <!-- Main T shape -->
-    <!-- Top left bar -->
-    <path d="M 0,40 L 40,0 L 100,0 L 120,20 L 30,20 Z" fill="url(#t-gradient)" />
-    
-    <!-- Vertical stem left side -->
-    <path d="M 60,140 L 30,20 L 70,20 L 100,140 Z" fill="url(#t-gradient)" />
-    
-    <!-- Vertical stem right side / hook -->
-    <path d="M 70,140 L 100,20 L 140,70 L 130,110 Z" fill="url(#t-gradient)" />
+  <!-- Background Base (Transparent for UI integration, with subtle deep dark ambient glow) -->
+  <rect width="500" height="500" fill="#000000" rx="24" />
 
-    <!-- Cyan inner accent -->
-    <path d="M 50,135 L 75,35 L 125,95 L 90,135 Z" fill="#06B6D4" opacity="0.6" filter="url(#glow)"/>
-    <path d="M 55,130 L 78,40 L 118,90 L 92,130 Z" fill="#0A0A0A" />
+  <!-- Center Ambient Radial Glow behind the TT emblem -->
+  <circle cx="250" cy="180" r="130" fill="#0284C7" opacity="0.22" filter="url(#neon-glow)" />
 
-    <!-- Circuit lines extending right -->
-    <path d="M 100,0 L 150,0 L 170,20 L 220,20" fill="none" stroke="url(#t-gradient)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
-    <circle cx="220" cy="20" r="5" fill="#06B6D4" filter="url(#glow)"/>
+  <!-- ============================================== -->
+  <!-- 3D INTERTWINED TT EMBLEM & ORBITAL RING -->
+  <!-- ============================================== -->
+  <g transform="translate(0, -10)">
 
-    <path d="M 110,10 L 140,10 L 160,30 L 200,30" fill="none" stroke="url(#t-gradient)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
-    <circle cx="200" cy="30" r="4.5" fill="#06B6D4" filter="url(#glow)"/>
+    <!-- Back segment of the Orbital Glow Ring (behind front TT facets) -->
+    <ellipse cx="250" cy="180" rx="160" ry="46" transform="rotate(-16 250 180)"
+      fill="none" stroke="url(#tt-glow-ring)" stroke-width="6" opacity="0.45" filter="url(#neon-glow)" />
 
-    <path d="M 120,20 L 140,40 L 180,40" fill="none" stroke="url(#t-gradient)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
-    <circle cx="180" cy="40" r="4" fill="#06B6D4" filter="url(#glow)"/>
+    <!-- Left T Top Bar (Cyan 3D polygon) -->
+    <polygon points="135,100 235,100 220,135 155,135" fill="url(#tt-blue-grad)" />
+    <!-- Left T Bevel Highlight -->
+    <polygon points="135,100 235,100 230,108 142,108" fill="#7DD3FC" />
 
-    <!-- Left accent purple line -->
-    <path d="M 45,130 L 20,40" fill="none" stroke="url(#accent-gradient)" stroke-width="4" stroke-linecap="round" />
-    
-    <!-- Inner cyan accent line -->
-    <path d="M 75,45 L 90,110" fill="none" stroke="#06B6D4" stroke-width="3" filter="url(#glow)" />
-    <circle cx="90" cy="110" r="3" fill="#06B6D4" />
+    <!-- Left T Inner Chrome Facet -->
+    <polygon points="175,135 220,135 220,215 190,215" fill="url(#tt-chrome-grad)" />
+
+    <!-- Left T Outer Wing Flare -->
+    <polygon points="135,100 155,135 130,150 110,118" fill="#0369A1" />
+
+    <!-- Right T Top Bar (Right side angled wing) -->
+    <polygon points="265,100 395,115 365,150 280,135" fill="url(#tt-blue-grad)" />
+    <polygon points="265,100 395,115 390,123 270,108" fill="#7DD3FC" />
+
+    <!-- Right T Chrome Inner Step -->
+    <polygon points="280,135 340,145 330,175 280,165" fill="url(#tt-chrome-grad)" />
+
+    <!-- Center Interlocking Stem (Vertical 3D Spear) -->
+    <!-- Left vertical facet -->
+    <polygon points="220,135 250,140 250,265 220,230" fill="url(#tt-blue-grad)" />
+    <!-- Center spine highlight -->
+    <line x1="250" y1="140" x2="250" y2="265" stroke="#BAE6FD" stroke-width="2" />
+    <!-- Right vertical facet (Chrome) -->
+    <polygon points="250,140 280,135 280,230 250,265" fill="url(#tt-chrome-grad)" />
+
+    <!-- Lower Spearpoint Bevels -->
+    <polygon points="220,230 250,265 240,270 215,235" fill="#0369A1" />
+    <polygon points="280,230 250,265 260,270 285,235" fill="#475569" />
+
+    <!-- Front segment of the Orbital Glow Ring (wrapping across front) -->
+    <path d="M 100,195 C 130,225 360,215 410,150"
+      fill="none" stroke="url(#tt-glow-ring)" stroke-width="9" stroke-linecap="round" filter="url(#ring-glow)" />
+    <path d="M 100,195 C 130,225 360,215 410,150"
+      fill="none" stroke="#E0F2FE" stroke-width="3" stroke-linecap="round" />
+
+    <!-- Right Wing Flare Specular Point -->
+    <circle cx="410" cy="150" r="4" fill="#00E5FF" filter="url(#neon-glow)" />
   </g>
 
-  <!-- Typography -->
-  <text x="200" y="240" font-family="'Space Grotesk', 'Inter', sans-serif" font-weight="900" font-size="42" fill="url(#t-gradient)" text-anchor="middle" letter-spacing="4">TIZZITECH</text>
+  <!-- ============================================== -->
+  <!-- BRAND TYPOGRAPHY: TIZZITECH STORE -->
+  <!-- ============================================== -->
+  <!-- TIZZITECH Main Wordmark -->
+  <text x="250" y="325"
+    font-family="'Montserrat', 'Arial Black', sans-serif"
+    font-size="44"
+    font-weight="900"
+    font-style="italic"
+    letter-spacing="2"
+    text-anchor="middle"
+    fill="url(#text-grad)">
+    TIZZITECH
+  </text>
+
+  <!-- STORE Badge Container -->
+  <g transform="translate(0, 345)">
+    <!-- Cyan framing lines left & right -->
+    <line x1="60" y1="15" x2="135" y2="15" stroke="#00B4D8" stroke-width="3" stroke-linecap="round" />
+    <line x1="365" y1="15" x2="440" y2="15" stroke="#00B4D8" stroke-width="3" stroke-linecap="round" />
+
+    <!-- Rounded Pill frame -->
+    <rect x="145" y="0" width="210" height="30" rx="15" fill="#000000" stroke="#00B4D8" stroke-width="3" />
+
+    <!-- Shopping Cart Icon inside pill -->
+    <g transform="translate(165, 7) scale(0.7)">
+      <path d="M 2 3 L 6 3 L 9 16 L 21 16 L 24 6 L 8 6" fill="none" stroke="#00E5FF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+      <circle cx="10" cy="20" r="2" fill="#00E5FF" />
+      <circle cx="19" cy="20" r="2" fill="#00E5FF" />
+    </g>
+
+    <!-- STORE Text -->
+    <text x="260" y="21"
+      font-family="'Montserrat', sans-serif"
+      font-size="16"
+      font-weight="900"
+      letter-spacing="7"
+      text-anchor="middle"
+      fill="#FFFFFF">
+      STORE
+    </text>
+  </g>
+
+  <!-- Subtitle: GADGETS • ACCESSORIES • MORE -->
+  <text x="250" y="405"
+    font-family="'Montserrat', sans-serif"
+    font-size="11"
+    font-weight="700"
+    letter-spacing="6"
+    text-anchor="middle"
+    fill="#94A3B8">
+    GADGETS  •  ACCESSORIES  •  MORE
+  </text>
+
+  <!-- ============================================== -->
+  <!-- CATEGORY ICONS STRIP AT BOTTOM -->
+  <!-- ============================================== -->
+  <g transform="translate(45, 430)" stroke="#00B4D8" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Phone -->
+    <g transform="translate(15, 0)">
+      <rect x="0" y="0" width="16" height="24" rx="3" />
+      <line x1="6" y1="20" x2="10" y2="20" />
+      <text x="8" y="34" font-size="7" font-family="sans-serif" stroke="none" fill="#94A3B8" font-weight="bold" text-anchor="middle">PHONES</text>
+    </g>
+
+    <line x1="50" y1="4" x2="50" y2="22" stroke="#1E293B" stroke-width="1.2" />
+
+    <!-- Earbuds -->
+    <g transform="translate(70, 0)">
+      <circle cx="6" cy="6" r="4" />
+      <path d="M 6 10 L 6 18" />
+      <circle cx="18" cy="6" r="4" />
+      <path d="M 18 10 L 18 18" />
+      <text x="12" y="34" font-size="7" font-family="sans-serif" stroke="none" fill="#94A3B8" font-weight="bold" text-anchor="middle">EARBUDS</text>
+    </g>
+
+    <line x1="115" y1="4" x2="115" y2="22" stroke="#1E293B" stroke-width="1.2" />
+
+    <!-- Smartwatch -->
+    <g transform="translate(135, 0)">
+      <rect x="4" y="4" width="16" height="16" rx="4" />
+      <path d="M 7 4 L 7 0 L 17 0 L 17 4" />
+      <path d="M 7 20 L 7 24 L 17 24 L 17 20" />
+      <text x="12" y="34" font-size="7" font-family="sans-serif" stroke="none" fill="#94A3B8" font-weight="bold" text-anchor="middle">WATCHES</text>
+    </g>
+
+    <line x1="185" y1="4" x2="185" y2="22" stroke="#1E293B" stroke-width="1.2" />
+
+    <!-- Laptop -->
+    <g transform="translate(205, 0)">
+      <rect x="4" y="2" width="22" height="15" rx="1.5" />
+      <line x1="0" y1="21" x2="30" y2="21" stroke-width="2.5" />
+      <text x="15" y="34" font-size="7" font-family="sans-serif" stroke="none" fill="#94A3B8" font-weight="bold" text-anchor="middle">LAPTOPS</text>
+    </g>
+
+    <line x1="260" y1="4" x2="260" y2="22" stroke="#1E293B" stroke-width="1.2" />
+
+    <!-- Charger -->
+    <g transform="translate(280, 0)">
+      <rect x="4" y="6" width="16" height="16" rx="2" />
+      <line x1="8" y1="0" x2="8" y2="6" />
+      <line x1="16" y1="0" x2="16" y2="6" />
+      <path d="M 12 10 L 10 14 L 14 14 L 12 18" stroke="#00E5FF" stroke-width="1.5" />
+      <text x="12" y="34" font-size="7" font-family="sans-serif" stroke="none" fill="#94A3B8" font-weight="bold" text-anchor="middle">CHARGERS</text>
+    </g>
+
+    <line x1="325" y1="4" x2="325" y2="22" stroke="#1E293B" stroke-width="1.2" />
+
+    <!-- Accessories / Cable -->
+    <g transform="translate(345, 0)">
+      <path d="M 6 0 L 6 12 C 6 18 18 18 18 12 L 18 0" />
+      <line x1="3" y1="0" x2="9" y2="0" stroke-width="2" />
+      <line x1="15" y1="0" x2="21" y2="0" stroke-width="2" />
+      <text x="12" y="34" font-size="7" font-family="sans-serif" stroke="none" fill="#94A3B8" font-weight="bold" text-anchor="middle">ACCESSORIES</text>
+    </g>
+  </g>
 </svg>

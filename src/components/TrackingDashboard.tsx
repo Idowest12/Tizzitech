@@ -53,7 +53,7 @@ export function TrackingDashboard({ orders }: TrackingDashboardProps) {
   ];
 
   return (
-    <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-500">
+    <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-500 w-full overflow-x-hidden">
       <div className="mb-8 flex items-end justify-between">
         <div>
           <h1 className="text-3xl font-black text-white tracking-tight uppercase">Order Tracking</h1>

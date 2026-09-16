@@ -1,7 +1,7 @@
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
 import React, { useState, useMemo, useEffect } from "react";
-import { Menu, ChevronDown, SlidersHorizontal, Lock } from "lucide-react";
+import { Menu, ChevronDown, SlidersHorizontal, Lock, ArrowUp, Sparkles, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "./components/Header";
 import { ProductCard } from "./components/ProductCard";
@@ -15,6 +15,7 @@ import { PrivacyPolicy, TermsOfService, RefundPolicy } from "./components/LegalP
 import { UserProfileDashboard } from "./components/UserProfileDashboard";
 import { AuthModal } from "./components/AuthModal";
 import { ResetPasswordView } from "./components/ResetPasswordView";
+import { VerifyEmailView } from "./components/VerifyEmailView";
 import { AboutUs } from "./components/AboutUs";
 import { ContactUs } from "./components/ContactUs";
 import { FAQs } from "./components/FAQs";
@@ -22,10 +23,11 @@ import { TechOfTheDay } from "./components/TechOfTheDay";
 import { ProductDetails } from "./components/ProductDetails";
 import { ProductLaunchWaitlist } from "./components/ProductLaunchWaitlist";
 import { Newsletter } from "./components/Newsletter";
+import { HeroSlider } from "./components/HeroSlider";
 import { useAuth } from "./contexts/AuthContext";
 import { useToast } from "./contexts/ToastContext";
-import { initialProducts, CATEGORIES as FALLBACK_CATEGORIES, BRANDS as FALLBACK_BRANDS } from "./data";
-import { Category, Condition, CartItem, Product, Order } from "./types";
+import { initialProducts, CATEGORIES as FALLBACK_CATEGORIES, BRANDS as FALLBACK_BRANDS, defaultHeroConfig } from "./data";
+import { Category, Condition, CartItem, Product, Order, HeroConfig } from "./types";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -72,22 +74,42 @@ export default function App() {
 
   const [products, setProducts] = useState<Product[]>(initialProducts);
   const [loadingProducts, setLoadingProducts] = useState(true);
+  const [showBackToTop, setShowBackToTop] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      // Trigger when scrolled past the hero section (~350px)
+      if (window.scrollY > 350) {
+        setShowBackToTop(true);
+      } else {
+        setShowBackToTop(false);
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  const scrollToTop = () => {
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  };
 
   useEffect(() => {
     localStorage.setItem('tizzitech_wishlist', JSON.stringify(wishlist));
   }, [wishlist]);
 
   const handleToggleWishlist = (product: Product) => {
-    setWishlist((prev) => {
-      const exists = prev.includes(product.id);
-      if (exists) {
-        showToast(`"${product.name}" removed from wishlist.`, 'info');
-        return prev.filter((id) => id !== product.id);
-      } else {
-        showToast(`"${product.name}" added to wishlist.`, 'success');
-        return [...prev, product.id];
-      }
-    });
+    const exists = wishlist.includes(product.id);
+    if (exists) {
+      setWishlist((prev) => prev.filter((id) => id !== product.id));
+      showToast(`"${product.name}" removed from wishlist.`, 'info');
+    } else {
+      setWishlist((prev) => [...prev, product.id]);
+      showToast(`"${product.name}" added to wishlist.`, 'success');
+    }
   };
   const [cart, setCart] = useState<CartItem[]>(() => {
     const saved = localStorage.getItem('tizzitech_cart');
@@ -114,6 +136,7 @@ export default function App() {
     | "product-details"
     | "checkout"
     | "reset-password"
+    | "verify-email"
     | "privacy"
     | "terms"
     | "refund"
@@ -122,6 +145,7 @@ export default function App() {
   >("store");
   const [searchQuery, setSearchQuery] = useState("");
   const [resetToken, setResetToken] = useState<string | null>(null);
+  const [verifyToken, setVerifyToken] = useState<string | null>(null);
 
   useEffect(() => {
     const visitorId = localStorage.getItem('tizzitech_visitor_id') || `v_${Math.random().toString(36).substring(2,15)}`;
@@ -167,7 +191,7 @@ export default function App() {
     logVisit();
   }, [user]);
   useEffect(() => {
-    // Parse URL for params like reset-password and tracking
+    // Parse URL for params like reset-password, verify-email and tracking
     const params = new URLSearchParams(window.location.search);
     const viewParam = params.get('view');
     const tokenParam = params.get('token');
@@ -177,8 +201,16 @@ export default function App() {
       setResetToken(tokenParam);
       setView('reset-password');
       window.history.replaceState({}, '', window.location.pathname);
+    } else if (viewParam === 'verify-email' && tokenParam) {
+      setVerifyToken(tokenParam);
+      setView('verify-email');
+      window.history.replaceState({}, '', window.location.pathname);
     } else if (viewParam === 'tracking') {
       setView('tracking');
+    } else if (viewParam === 'admin') {
+      setView('admin');
+    } else if (viewParam === 'launch') {
+      setView('launch');
     }
   }, []);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -196,9 +228,27 @@ export default function App() {
           if (s.brands) setBrandsList(s.brands);
           if (s.categories) setCategoriesList(s.categories);
           if (s.deliveryZones) setDeliveryZones(s.deliveryZones);
+          if (s.heroConfig) {
+            setHeroConfig(s.heroConfig);
+            localStorage.setItem('tizzitech_hero_config', JSON.stringify(s.heroConfig));
+          }
         }
       } catch (err) {
         console.warn("Could not load latest global settings from cached backend:", err);
+      }
+
+      // Also fetch from Firestore settings/global if available
+      try {
+        const sSnap = await getDoc(doc(db, 'settings', 'global'));
+        if (sSnap.exists()) {
+          const sData = sSnap.data();
+          if (sData.heroConfig) {
+            setHeroConfig(sData.heroConfig);
+            localStorage.setItem('tizzitech_hero_config', JSON.stringify(sData.heroConfig));
+          }
+        }
+      } catch (err) {
+        // offline or rules fallback
       }
       
       // 2. Fetch Products from cached backend endpoint
@@ -343,6 +393,8 @@ export default function App() {
   }, [user]);
 
   // Poll for order status updates
+  const orderIdsKey = useMemo(() => orders.map(o => o.id).sort().join(','), [orders]);
+
   useEffect(() => {
     let intervalId: NodeJS.Timeout;
     if (orders.length > 0) {
@@ -354,39 +406,47 @@ export default function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ orderIds })
           });
-          const data = await res.json();
-          if (data.success && data.statuses) {
-            let changed = false;
-            const updatedOrders = orders.map(o => {
-              if (data.statuses[o.id] && data.statuses[o.id] !== o.status) {
-                changed = true;
-                return { ...o, status: data.statuses[o.id] as any };
-              }
-              return o;
-            });
-            if (changed) {
-              setOrders(updatedOrders);
-              if (user) {
-                localStorage.setItem(`tizzitech_orders_${user.uid}`, JSON.stringify(updatedOrders));
-              } else {
-                localStorage.setItem('tizzitech_guest_orders', JSON.stringify(updatedOrders));
-              }
+          
+          const contentType = res.headers.get("content-type");
+          if (res.ok && contentType && contentType.includes("application/json")) {
+            const data = await res.json();
+            if (data.success && data.statuses) {
+              setOrders(prevOrders => {
+                let changed = false;
+                const updatedOrders = prevOrders.map(o => {
+                  if (data.statuses[o.id] && data.statuses[o.id] !== o.status) {
+                    changed = true;
+                    return { ...o, status: data.statuses[o.id] as any };
+                  }
+                  return o;
+                });
+
+                if (changed) {
+                  if (user) {
+                    localStorage.setItem(`tizzitech_orders_${user.uid}`, JSON.stringify(updatedOrders));
+                  } else {
+                    localStorage.setItem('tizzitech_guest_orders', JSON.stringify(updatedOrders));
+                  }
+                  return updatedOrders;
+                }
+                return prevOrders;
+              });
             }
           }
         } catch (e: any) {
           if (e.message !== 'Failed to fetch') {
-            console.error("Error fetching order statuses:", e);
+            console.warn("Could not poll order statuses:", e?.message || e);
           }
         }
       };
-      // Fetch immediately and then poll
+      // Fetch immediately and then poll every 6s
       fetchStatuses();
-      intervalId = setInterval(fetchStatuses, 3000);
+      intervalId = setInterval(fetchStatuses, 6000);
     }
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [user, orders]);
+  }, [user, orderIdsKey]);
 
   // Persist order updates to storage
   useEffect(() => {
@@ -427,6 +487,23 @@ export default function App() {
   const [brandsList, setBrandsList] = useState(FALLBACK_BRANDS);
   const [categoriesList, setCategoriesList] = useState(FALLBACK_CATEGORIES);
   const [deliveryZones, setDeliveryZones] = useState<any[]>([]);
+  const [heroConfig, setHeroConfig] = useState<HeroConfig>(() => {
+    const saved = localStorage.getItem('tizzitech_hero_config');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && Array.isArray(parsed.slides)) {
+          const hasLegacyAi = parsed.slides.some((s: any) => s.title?.includes('ENGINEERED RIGHT'));
+          if (hasLegacyAi) {
+            localStorage.setItem('tizzitech_hero_config', JSON.stringify(defaultHeroConfig));
+            return defaultHeroConfig;
+          }
+          return parsed;
+        }
+      } catch (e) {}
+    }
+    return defaultHeroConfig;
+  });
   const [sortBy, setSortBy] = useState<"newest" | "price_asc" | "price_desc">(
     "newest",
   );
@@ -541,7 +618,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-black flex flex-col font-sans text-neutral-300">
+    <div className="min-h-screen min-h-[100dvh] bg-black flex flex-col font-sans text-neutral-300 w-full max-w-[100vw] overflow-x-hidden">
       <Header
         cartCount={cartCount}
         onOpenCart={() => setIsCartOpen(true)}
@@ -574,7 +651,7 @@ export default function App() {
           currentView={view}
         />
 
-      <main className="flex-1 w-full bg-black relative">
+      <main className="flex-1 w-full max-w-[100vw] bg-black relative overflow-x-hidden">
         {view === "launch" ? (
           <ProductLaunchWaitlist onGoToStore={() => setView("store")} />
         ) : view === "techoftheday" ? (
@@ -586,7 +663,17 @@ export default function App() {
         ) : view === "refund" ? (
           <RefundPolicy />
         ) : view === "about" ? (
-          <AboutUs />
+          <AboutUs
+            onShopNow={() => {
+              setView("store");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+              setTimeout(() => {
+                document
+                  .getElementById("product-grid")
+                  ?.scrollIntoView({ behavior: "smooth" });
+              }, 100);
+            }}
+          />
         ) : view === "contact" ? (
           <ContactUs />
         ) : view === "faqs" ? (
@@ -622,6 +709,12 @@ export default function App() {
             onSuccess={() => setView("store")}
             onCancel={() => setView("store")}
           />
+        ) : view === "verify-email" && verifyToken ? (
+          <VerifyEmailView 
+            token={verifyToken}
+            onSuccess={() => setView("store")}
+            onCancel={() => setView("store")}
+          />
         ) : view === "profile" ? (
           <div className="relative z-10 pt-8 pb-16">
             <UserProfileDashboard 
@@ -634,85 +727,86 @@ export default function App() {
           </div>
         ) : (
           <div className="relative z-10 w-full flex flex-col animate-in fade-in duration-500">
-            {/* PROMINENT TOP PRODUCT LAUNCH ANNOUNCEMENT BANNER */}
+            {/* PROMINENT TOP PRODUCT LAUNCH ANNOUNCEMENT RIBBON */}
             {!searchQuery && selectedCategory === "All" && selectedBrands.length === 0 && (
-              <div className="w-full bg-gradient-to-r from-cyan-950 via-purple-950 to-neutral-950 border-b border-cyan-500/30 px-4 py-3 text-white">
-                <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
-                  <div className="flex items-center gap-2.5">
-                    <span className="flex h-3 w-3 relative">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-cyan-500"></span>
-                    </span>
-                    <p className="text-xs sm:text-sm font-medium">
-                      <span className="font-extrabold text-cyan-300 uppercase tracking-wider">Pre-Launch 2026:</span>{" "}
-                      Galaxy Z Fold 7, iPhone 18 Fold, Pixel 11 Pro & Xiaomi drops. Claim 7% Off & Free Shipping!
-                    </p>
-                  </div>
-                  <button
+              <aside 
+                id="pre-launch-announcement-ribbon"
+                aria-label="Pre-Launch 2026 Announcement"
+                className="w-full relative bg-neutral-950/95 border-b border-neutral-850 backdrop-blur-md overflow-hidden"
+              >
+                {/* Subtle top accent ambient glow line */}
+                <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent" />
+                
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 sm:py-2.5 flex items-center justify-between gap-3 sm:gap-6">
+                  {/* Left Side: Badge & Highlighted Teaser */}
+                  <div 
                     onClick={() => setView("launch")}
-                    className="shrink-0 text-xs font-black uppercase tracking-wider bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-400 hover:to-purple-400 text-black px-4 py-1.5 rounded-full shadow-lg shadow-cyan-950/50 transition-all flex items-center gap-1.5"
+                    className="flex items-center gap-2.5 sm:gap-3 min-w-0 cursor-pointer group flex-1"
                   >
-                    <span>VIP Pre-Launch Access</span>
-                    <span>→</span>
-                  </button>
+                    {/* Badge: Single line, no wrapping */}
+                    <div className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 font-semibold text-[11px] tracking-wider uppercase whitespace-nowrap shadow-sm">
+                      <Sparkles className="w-3 h-3 text-blue-400 shrink-0" />
+                      <span>Pre-Launch 2026</span>
+                    </div>
+
+                    {/* Hardware Drop Highlights */}
+                    <div className="flex items-center gap-2 text-xs text-neutral-300 min-w-0 truncate">
+                      <span className="hidden sm:inline text-neutral-400 font-medium">Flagship Drops:</span>
+                      <span className="font-medium text-neutral-100 truncate group-hover:text-blue-300 transition-colors">
+                        Galaxy Z Fold 7, iPhone 18 Fold & Pixel 11 Pro
+                      </span>
+                      <span className="hidden md:inline-flex text-neutral-400 text-[11px] whitespace-nowrap">
+                        • VIP Early Access & 7% Off
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Right Side: Action Button */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      id="launch-waitlist-ribbon-btn"
+                      onClick={() => setView("launch")}
+                      className="group inline-flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold tracking-wide transition-all shadow-sm hover:shadow-blue-600/30 whitespace-nowrap active:scale-95"
+                    >
+                      <span>Join Waitlist</span>
+                      <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </aside>
             )}
 
-            {/* Hero Section */}
+            {/* Hero Section with Animated Background Slideshow & Delivery Ticker */}
             {!searchQuery &&
               selectedCategory === "All" &&
               selectedBrands.length === 0 && (
-                <div className="w-full bg-neutral-950 py-16 sm:py-24 border-b border-neutral-900">
-                  <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-                    <div>
-                      {user && (
-                        <p className="text-blue-500 font-bold tracking-widest text-xs uppercase mb-4">
-                          {getGreeting()}
-                        </p>
-                      )}
-                      <h1 className="font-serif text-4xl sm:text-7xl font-black text-white leading-none uppercase mb-6 mt-4">
-                        Tech <br />
-                        <span className="text-blue-600">Accessories</span>
-                      </h1>
-                      <p className="text-neutral-400 max-w-md text-lg mb-8">
-                        Laptops, phones, keyboards & tech accessories —
-                        everything in one place.
-                      </p>
-                      <div className="flex flex-wrap items-center gap-4">
-                        <button
-                          onClick={() => {
-                            document
-                              .getElementById("product-grid")
-                              ?.scrollIntoView({ behavior: "smooth" });
-                          }}
-                          className="bg-blue-600 text-white font-bold py-3 px-8 text-sm tracking-widest uppercase hover:bg-blue-700 transition-colors flex items-center gap-4"
-                        >
-                          Shop Now →
-                        </button>
-                        <button
-                          onClick={() => setView("launch")}
-                          className="bg-neutral-900 border border-cyan-500/40 hover:border-cyan-400 text-cyan-300 font-bold py-3 px-6 text-sm tracking-widest uppercase transition-all flex items-center gap-2 group"
-                        >
-                          <span className="flex h-2 w-2 relative">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
-                          </span>
-                          <span>Pre-Launch 2026 ⚡</span>
-                        </button>
-                      </div>
-                    </div>
-                    <div className="hidden lg:block relative">
-                      <div className="aspect-[4/3] bg-neutral-900 overflow-hidden ml-[38px] flex items-center justify-center p-8">
-                        <img
-                          src="/logo.svg"
-                          alt="Hero Featured Logo"
-                          className="w-full h-full object-cover mix-blend-luminosity hover:mix-blend-normal transition-all duration-700 opacity-80 rounded-2xl"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <HeroSlider
+                  config={heroConfig}
+                  greeting={user ? getGreeting() : undefined}
+                  brands={brandsList}
+                  onShopNow={() => {
+                    document
+                      .getElementById("product-grid")
+                      ?.scrollIntoView({ behavior: "smooth" });
+                  }}
+                  onSecondaryAction={(actionText) => {
+                    if (actionText?.toLowerCase().includes("launch") || actionText?.includes("2026")) {
+                      setView("launch");
+                    } else if (actionText?.toLowerCase().includes("track")) {
+                      setView("tracking");
+                    } else if (actionText?.toLowerCase().includes("tech") || actionText?.toLowerCase().includes("day")) {
+                      document.getElementById("tech-of-day")?.scrollIntoView({ behavior: "smooth" });
+                    } else {
+                      document.getElementById("product-grid")?.scrollIntoView({ behavior: "smooth" });
+                    }
+                  }}
+                  onSelectBrand={(brand) => {
+                    setSelectedBrands([brand]);
+                    document
+                      .getElementById("product-grid")
+                      ?.scrollIntoView({ behavior: "smooth" });
+                  }}
+                />
               )}
 
             <div
@@ -733,7 +827,7 @@ export default function App() {
                 />
               </aside>
 
-              <section className="flex-1 flex flex-col pt-4">
+              <section className="flex-1 flex flex-col pt-4 min-w-0">
                 {filteredProducts.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-24 text-center">
                     <h3 className="text-xl font-serif text-white mb-2 uppercase">
@@ -757,9 +851,9 @@ export default function App() {
                   </div>
                 ) : (
                   <>
-                    <div className="mb-6 flex justify-between items-center text-xs tracking-widest uppercase font-bold text-neutral-500 border-b border-neutral-900 pb-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-white text-sm font-black tracking-widest">
+                    <div className="mb-6 flex flex-wrap justify-between items-center text-xs tracking-widest uppercase font-bold text-neutral-500 border-b border-neutral-900 pb-4 gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-white text-sm font-black tracking-widest truncate">
                           {selectedCategory === "All"
                             ? "ALL PRODUCTS"
                             : selectedCategory === "Tech"
@@ -768,11 +862,11 @@ export default function App() {
                                 ? "ACCESSORIES"
                                 : selectedCategory}
                         </span>
-                        <span className="text-neutral-600 font-mono">
+                        <span className="text-neutral-600 font-mono shrink-0">
                           ({filteredProducts.length})
                         </span>
                       </div>
-                      <div className="flex items-center justify-end gap-1 sm:gap-2 relative">
+                      <div className="flex items-center justify-end gap-1 sm:gap-2 relative shrink-0">
                         {/* Mobile Hamburger for Condition */}
                         <div className="sm:hidden group">
                           <details className="relative">
@@ -896,11 +990,13 @@ export default function App() {
           <div>
             <div className="flex items-center gap-3 font-serif font-black text-xl tracking-tighter text-white uppercase mb-6">
               <img
-                src="/logo.svg"
+                src="/logo-icon.svg"
                 alt="Tizzitech Logo"
-                className="h-8 w-auto object-contain"
+                className="h-8 w-8 object-contain rounded-lg drop-shadow-[0_0_8px_rgba(2,132,199,0.4)]"
               />
-              <span>Tizzitech</span>
+              <span className="flex items-center">
+                Tizzi<span className="text-blue-500">tech</span>
+              </span>
             </div>
             <p className="text-neutral-500 text-sm max-w-xs">
               Premium Tech Gear and Accessories. A Brand you can trust for
@@ -1067,6 +1163,25 @@ export default function App() {
         setIsAuthOpen(false);
         setPendingCheckout(false);
       }} />}
+
+      {/* Floating Back to Top Button */}
+      <AnimatePresence>
+        {showBackToTop && (
+          <motion.button
+            key="back-to-top"
+            initial={{ opacity: 0, scale: 0.8, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.8, y: 16 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            onClick={scrollToTop}
+            aria-label="Back to top"
+            title="Back to Top"
+            className="fixed bottom-6 right-6 z-40 p-3.5 sm:p-4 rounded-2xl bg-neutral-900/90 hover:bg-blue-600 text-neutral-300 hover:text-white border border-neutral-800 hover:border-blue-500/80 shadow-2xl backdrop-blur-md transition-colors duration-300 group focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer active:scale-95 flex items-center justify-center"
+          >
+            <ArrowUp className="w-5 h-5 transition-transform duration-300 group-hover:-translate-y-1" />
+          </motion.button>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

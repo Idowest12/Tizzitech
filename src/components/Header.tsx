@@ -132,11 +132,13 @@ export function Header({
         >
           {/* Logo Image */}
           <img
-            src="/logo.svg"
+            src="/logo-icon.svg"
             alt="Tizzitech Logo"
-            className="h-7 w-7 object-cover rounded-full"
+            className="h-9 w-9 object-contain rounded-lg drop-shadow-[0_0_12px_rgba(2,132,199,0.5)] group-hover:scale-105 transition-transform"
           />
-          <span>Tizzitech</span>
+          <span className="flex items-center">
+            Tizzi<span className="text-blue-500">tech</span>
+          </span>
         </div>
 
         {/* Center Navigation Links (Desktop) */}
@@ -211,7 +213,7 @@ export function Header({
                   onClick={() => handleCategoryClick("Mouse")}
                   className="block w-full text-left px-4 py-2 hover:bg-neutral-800 text-white transition-colors"
                 >
-                  Mice / Mouse
+                  Mouse
                 </button>
                 <button
                   onClick={() => handleCategoryClick("Case Protector")}
@@ -457,7 +459,7 @@ export function Header({
                       }}
                       className="block w-full text-left py-2 hover:text-white text-neutral-300 transition-colors uppercase text-[10px] font-bold tracking-widest"
                     >
-                      Mice
+                      Mouse
                     </button>
                     <button
                       onClick={() => {

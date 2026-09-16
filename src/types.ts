@@ -53,3 +53,20 @@ export interface Order {
   emailHistory?: OrderEmailEvent[];
 }
 
+export interface HeroSlide {
+  id: string;
+  imageUrl: string;
+  title: string;
+  subtitle: string;
+  badge?: string;
+  primaryButtonText?: string;
+  secondaryButtonText?: string;
+}
+
+export interface HeroConfig {
+  slides: HeroSlide[];
+  deliveryHeader: string;
+  deliveryAreas: string[];
+  autoplaySpeed?: number; // in seconds, default 5
+}
+

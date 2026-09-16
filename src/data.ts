@@ -1,4 +1,4 @@
-import { Product } from './types';
+import { Product, HeroConfig } from './types';
 
 export const initialProducts: Product[] = [
   {
@@ -15,7 +15,9 @@ export const initialProducts: Product[] = [
     images: [
       'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1611186871348-b1ce696e52c9?auto=format&fit=crop&w=800&q=80',
-      'https://images.unsplash.com/photo-1541807084-5c52b6b3adef?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1541807084-5c52b6b3adef?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1515378791036-0648a3ef77b2?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&w=800&q=80'
     ],
     reviews: [
       { id: 'r1', author: 'Abiodun O.', rating: 5, comment: 'Absolutely outstanding machine. The M2 Max is an absolute beast, compilations complete in seconds and the battery life is almost magical.', date: '2026-05-15' },
@@ -55,7 +57,9 @@ export const initialProducts: Product[] = [
     images: [
       'https://images.unsplash.com/photo-1632661674596-df8be070a5c5?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1603792907191-89e55f70099a?auto=format&fit=crop&w=800&q=80',
-      'https://images.unsplash.com/photo-1512054502232-10a0a035d672?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1512054502232-10a0a035d672?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1592750475338-74b7b21085ab?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1580910051074-3eb694886505?auto=format&fit=crop&w=800&q=80'
     ],
     reviews: [
       { id: 'r4', author: 'Kelechi U.', rating: 5, comment: 'Clean and pristine condition as promised. Battery health is at 88% which is excellent for a used unit.', date: '2026-05-28' }
@@ -71,6 +75,12 @@ export const initialProducts: Product[] = [
     specs: { storage: '256GB', color: 'Phantom Black' },
     stock: 12,
     imageUrl: 'https://images.unsplash.com/photo-1678911820864-e4c567cab6fb?auto=format&fit=crop&w=800&q=80',
+    images: [
+      'https://images.unsplash.com/photo-1678911820864-e4c567cab6fb?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1610945265064-0e34e5519bbf?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1580910051074-3eb694886505?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1565849904461-04a58ad377e0?auto=format&fit=crop&w=800&q=80'
+    ],
     reviews: [
       { id: 'r5', author: 'Musa Y.', rating: 5, comment: 'The display is absolutely out of this world! The zoom camera feature is brilliant. Tizzitech delivered within 24 hours in Lagos.', date: '2026-05-29' }
     ]
@@ -84,7 +94,7 @@ export const initialProducts: Product[] = [
     condition: 'New',
     specs: { type: 'Wireless Ergonomic' },
     stock: 20,
-    imageUrl: 'https://images.unsplash.com/photo-1595225476474-87563907a212?auto=format&fit=crop&w=800&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?auto=format&fit=crop&w=800&q=80',
     reviews: [
       { id: 'r6', author: 'Tolulope S.', rating: 5, comment: 'Highly recommend if you do a lot of office work or programming. Extremely comfortable with infinite scrolling.', date: '2026-05-18' }
     ]
@@ -263,7 +273,7 @@ export const initialProducts: Product[] = [
     specs: { ram: '12GB', storage: '256GB', processor: 'Tensor G3', display: '6.7" Super Actua' },
     description: 'The Pixel 8 Pro offers the brightest display yet, advanced AI photo editing, and the incredible new Tensor G3 chip.',
     stock: 18,
-    imageUrl: 'https://images.unsplash.com/photo-1598327105666-5b89351cb315?auto=format&fit=crop&w=800&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=800&q=80',
     reviews: []
   },
   {
@@ -276,7 +286,7 @@ export const initialProducts: Product[] = [
     specs: { ram: '16GB', storage: '512GB', processor: 'Tensor G4', display: '6.7" Super Actua 2' },
     description: 'The Pixel 9 Pro redefines smartphone photography and AI performance. Smarter, faster, and more integrated into the Google ecosystem.',
     stock: 12,
-    imageUrl: 'https://images.unsplash.com/photo-1598327105666-5b89351cb315?auto=format&fit=crop&w=800&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1580910051074-3eb694886505?auto=format&fit=crop&w=800&q=80',
     reviews: []
   },
   {
@@ -289,7 +299,7 @@ export const initialProducts: Product[] = [
     specs: { ram: '16GB', storage: '1TB', processor: 'Tensor G5', display: '6.8" MicroLED' },
     description: 'The highly anticipated Google Pixel 10 Pro with a next-generation custom Tensor G5 chip and a stunning MicroLED display.',
     stock: 5,
-    imageUrl: 'https://images.unsplash.com/photo-1598327105666-5b89351cb315?auto=format&fit=crop&w=800&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1565849904461-04a58ad377e0?auto=format&fit=crop&w=800&q=80',
     reviews: []
   },
   {
@@ -302,7 +312,7 @@ export const initialProducts: Product[] = [
     specs: { connection: 'Bluetooth 5.2', battery: '40 Hours', feature: 'Deep Bass' },
     description: 'Oraimo BoomPop 2 over-ear wireless headphones. Powerful bass, long-lasting battery, and foldable design for easy carrying.',
     stock: 50,
-    imageUrl: 'https://images.unsplash.com/photo-1618366712010-f4ae9c647dcb?auto=format&fit=crop&w=800&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=800&q=80',
     reviews: []
   },
   {
@@ -328,7 +338,7 @@ export const initialProducts: Product[] = [
     specs: { connection: 'Bluetooth 5.3', battery: '30 Hours with Case', feature: 'Active Noise Cancelling' },
     description: 'Galaxy Buds 3 Pro feature a redesigned stem, high-fidelity audio, and intelligent active noise cancellation.',
     stock: 30,
-    imageUrl: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=800&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1606220588913-b3aacb4d2f46?auto=format&fit=crop&w=800&q=80',
     reviews: []
   },
   {
@@ -354,7 +364,7 @@ export const initialProducts: Product[] = [
     specs: { connection: 'Bluetooth 5.2', battery: '35 Hours with Case', feature: 'ANC & Transparency' },
     description: 'Oraimo FreePods 4 deliver active noise cancellation, heavy bass, and a durable battery for everyday use.',
     stock: 60,
-    imageUrl: 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=800&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1572569511254-d8f925fe2cbb?auto=format&fit=crop&w=800&q=80',
     reviews: []
   }
 ,{
@@ -419,7 +429,7 @@ export const initialProducts: Product[] = [
     specs: { ram: '32GB', storage: '2TB SSD', processor: 'Intel Core i9', graphics: 'RTX 4090', display: '16" Dual-Mode Mini-LED' },
     description: 'The pinnacle of gaming laptops. Impossibly thin CNC aluminum chassis packed with an RTX 4090 and the world’s first dual-mode display.',
     stock: 3,
-    imageUrl: 'https://images.unsplash.com/photo-1593642632823-8f785ba67e45?auto=format&fit=crop&w=800&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1525547719571-a2d4ac8945e2?auto=format&fit=crop&w=800&q=80',
     reviews: []
   },
   {
@@ -432,9 +442,78 @@ export const initialProducts: Product[] = [
     specs: { ram: '64GB', storage: '2TB SSD', processor: 'Intel Core i9', graphics: 'RTX 4080', display: '18" QHD+ 165Hz' },
     description: 'A desktop replacement like no other. Experience massive screen real estate and unparalleled performance in an iconic Alienware chassis.',
     stock: 7,
-    imageUrl: 'https://images.unsplash.com/photo-1593642702821-c823b13eb295?auto=format&fit=crop&w=800&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1587202372775-e229f172b9d7?auto=format&fit=crop&w=800&q=80',
     reviews: []
   }
 ];
 export const BRANDS = ['Apple', 'Dell', 'Samsung', 'Logitech', 'Keychron', 'Anker', 'Lenovo', 'HP', 'Techno', 'Xiaomi', 'Infinix', 'Google', 'Oraimo', 'Sony', 'Asus', 'Razer'];
 export const CATEGORIES = ['Laptops', 'Phones', 'Mouse', 'Keyboards', 'Chargers', 'Earpod', 'Earpiece', 'Case Protector', 'Screen Guard', 'Headsets', 'Earbuds'];
+
+export const defaultHeroConfig: HeroConfig = {
+  autoplaySpeed: 5,
+  deliveryHeader: "WHERE WE DELIVER — 24+ AREAS NATIONWIDE",
+  deliveryAreas: [
+    "Victoria Island",
+    "Lekki Phase 1 & 2",
+    "Ikeja (Computer Village)",
+    "Surulere",
+    "Yaba",
+    "Ajah & Sangotedo",
+    "Gbagada",
+    "Magodo",
+    "Ikoyi",
+    "Festac Town",
+    "Shomolu",
+    "Ogba",
+    "Ojota",
+    "Maryland",
+    "Abuja FCT",
+    "Port Harcourt",
+    "Ibadan",
+    "Enugu",
+    "Asaba",
+    "Benin City",
+    "Abeokuta",
+    "Kano",
+    "Akure",
+    "Warri"
+  ],
+  slides: [
+    {
+      id: "slide_1",
+      imageUrl: "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=1920&q=80",
+      badge: "CERTIFIED TECH GEAR • LAGOS & NATIONWIDE",
+      title: "TECH & ACCESSORIES.",
+      subtitle: "Laptops, phones, keyboards & tech accessories — tested, certified, and delivered straight to your doorstep.",
+      primaryButtonText: "Shop Products",
+      secondaryButtonText: "Pre-Launch 2026"
+    },
+    {
+      id: "slide_2",
+      imageUrl: "https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1920&q=80",
+      badge: "SAME-DAY LAGOS DELIVERY",
+      title: "PREMIUM LAPTOPS & WORKSPACE GEAR.",
+      subtitle: "MacBooks, Dell, HP and mechanical keyboards built for developers, creators, and professionals.",
+      primaryButtonText: "Explore Accessories",
+      secondaryButtonText: "Pre-Launch 2026"
+    },
+    {
+      id: "slide_3",
+      imageUrl: "https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=1920&q=80",
+      badge: "OFFICIAL BRAND WARRANTIES",
+      title: "VERIFIED HARDWARE. HONEST VALUE.",
+      subtitle: "Every laptop and device is bench-inspected and backed with our tested quality guarantee.",
+      primaryButtonText: "Browse Catalog",
+      secondaryButtonText: "Tech of the Day"
+    },
+    {
+      id: "slide_4",
+      imageUrl: "https://images.unsplash.com/photo-1587829741301-dc798b83add3?auto=format&fit=crop&w=1920&q=80",
+      badge: "GENUINE ACCESSORIES",
+      title: "AUDIO, CHARGERS & PERIPHERALS.",
+      subtitle: "GaN chargers, wireless earbuds, protective cases, and cables from Apple, Anker, Samsung, and Logitech.",
+      primaryButtonText: "View Accessories",
+      secondaryButtonText: "Shop Now"
+    }
+  ]
+};

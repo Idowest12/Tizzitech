@@ -8,6 +8,7 @@ import { OAuth2Client } from 'google-auth-library';
 import multer from 'multer';
 import { v2 as cloudinary } from 'cloudinary';
 import nodemailer from 'nodemailer';
+import { GoogleGenAI } from '@google/genai';
 
 // Configure Nodemailer Utility
 export const sendEmail = async (to: string, subject: string, html: string) => {
@@ -205,6 +206,35 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = 3000;
 
+// 1. SECURE DEPLOYMENT: HTTPS ENFORCEMENT & STRICT RESPONSE HEADERS
+app.use((req, res, next) => {
+  const proto = req.headers['x-forwarded-proto'];
+  const isHttps = proto === 'https' || req.secure;
+  const host = req.headers['x-forwarded-host'] || req.headers.host || '';
+  const isLocal = host.includes('localhost') || host.includes('127.0.0.1') || host.includes('0.0.0.0');
+
+  // Enforce HTTPS redirection in cloud environments (Cloud Run / production)
+  if (process.env.NODE_ENV === 'production' && !isHttps && !isLocal && req.path !== '/api/health') {
+    return res.redirect(301, `https://${host}${req.url}`);
+  }
+
+  // Set Modern Web Security Headers
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
+  
+  // Protect against clickjacking while allowing Google AI Studio Preview iframe
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader(
+    'Content-Security-Policy',
+    "frame-ancestors 'self' https://*.google.com https://*.run.app https://*.aistudio.google.com;"
+  );
+
+  next();
+});
+
 // Enable JSON middleware for parsing parsed body structures
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -275,7 +305,7 @@ app.get('/api/debug-routes', (req, res) => {
  */
 
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, getDocs, doc, setDoc, updateDoc, getDoc, query, where, runTransaction, deleteDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, getDocs, doc, setDoc, updateDoc, getDoc, query, where, orderBy, limit, runTransaction, deleteDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 
 function getAdminDb() {
@@ -438,30 +468,195 @@ async function getRequestGeo(req: express.Request) {
   };
 }
 
-async function logServerAuditActivity(req: express.Request, action: string, details: string, explicitEmail?: string) {
-  const db = getFirebaseDb();
-  if (!db) return;
-  try {
-    const id = Date.now().toString() + Math.random().toString(36).substring(2, 7);
-    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
-    
-    const email = explicitEmail || (req as any).admin?.email || 'system-fallback';
+// 2. COMPREHENSIVE SECURITY OBSERVABILITY & THREAT DETECTION ENGINE
+interface ThreatStats {
+  totalScans: number;
+  blockedAttacks: number;
+  rateLimitBlocks: number;
+  botSpamBlocks: number;
+  scraperBlocks: number;
+  honeypotBlocks: number;
+  aiAbuseBlocks: number;
+  authSuccessCount: number;
+  authFailureCount: number;
+  recentAlerts: Array<{ timestamp: number; ip: string; type: string; details: string; severity: string }>;
+}
 
-    await setDoc(doc(db, 'audit_logs', id), {
-      id,
-      timestamp: Date.now(),
-      action,
-      details,
-      email,
+const threatStats: ThreatStats = {
+  totalScans: 0,
+  blockedAttacks: 0,
+  rateLimitBlocks: 0,
+  botSpamBlocks: 0,
+  scraperBlocks: 0,
+  honeypotBlocks: 0,
+  aiAbuseBlocks: 0,
+  authSuccessCount: 0,
+  authFailureCount: 0,
+  recentAlerts: []
+};
+
+// In-memory sliding window for IP and credential brute force tracking
+const ipActivityWindow = new Map<string, { failedAttempts: number; lastReset: number; isSuspicious: boolean }>();
+
+const SUSPICIOUS_PATTERNS = [
+  /(\.\.\/|\.\.\\)/i, // Directory Traversal
+  /(<script|javascript:|onload=|onerror=)/i, // XSS in query / parameters
+  /(union(\s+all)?\s+select|select\s+.*\s+from|insert\s+into|drop\s+table|benchmark\(|sleep\()/i, // SQL Injection
+  /(\/etc\/passwd|\/proc\/self|\.env|\.git|\.aws|wp-config|wp-login|xmlrpc\.php)/i // Probing dotfiles/admin scripts
+];
+
+const SUSPICIOUS_USER_AGENTS = [
+  /sqlmap/i,
+  /nikto/i,
+  /nmap/i,
+  /masscan/i,
+  /wpscan/i,
+  /acunetix/i,
+  /havij/i,
+  /dirbuster/i,
+  /gobuster/i,
+  /hydra/i,
+  /medusa/i,
+  /zgrab/i,
+  /nuclei/i,
+  /httpx/i
+];
+
+const SCRAPER_BOT_USER_AGENTS = [
+  /scrapy/i,
+  /bytespider/i,
+  /python-requests/i,
+  /aiohttp/i,
+  /httpclient/i,
+  /urllib/i,
+  /go-http-client/i,
+  /phantomjs/i,
+  /headlesschrome/i,
+  /selenium/i,
+  /casperjs/i,
+  /puppeteer/i
+];
+
+async function logSecurityEvent(
+  req: express.Request | null,
+  eventType: string,
+  severity: 'INFO' | 'WARN' | 'HIGH' | 'CRITICAL',
+  details: string,
+  explicitEmail?: string,
+  metadata?: Record<string, any>
+) {
+  const timestamp = Date.now();
+  const rawIp = req ? (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown') as string : 'system';
+  const ip = typeof rawIp === 'string' ? rawIp.split(',')[0].trim() : 'unknown';
+  const rawUserAgent = req ? (req.headers['user-agent'] || 'unknown') as string : 'internal';
+  const userAgent = typeof rawUserAgent === 'string' ? rawUserAgent.substring(0, 300) : 'unknown';
+  const email = explicitEmail || (req as any)?.admin?.email || (req as any)?.user?.email || 'anonymous';
+  const path = req ? req.originalUrl || req.path : '';
+
+  if (eventType.includes('SUCCESS')) {
+    threatStats.authSuccessCount++;
+  } else if (eventType.includes('FAIL') || eventType.includes('DENIED')) {
+    threatStats.authFailureCount++;
+  }
+
+  const logEntry = {
+    id: `SEC-${timestamp}-${Math.random().toString(36).substring(2, 7)}`,
+    timestamp,
+    eventType,
+    severity,
+    details,
+    email,
+    ip,
+    userAgent,
+    path,
+    metadata: metadata || null,
+    createdAt: new Date().toISOString()
+  };
+
+  // Structured Logging for Cloud Observability (Cloud Run / GCP Cloud Logging)
+  console.log(`[SECURITY_${severity}] [${eventType}] IP: ${ip} | User: ${email} | Path: ${path} | Details: ${details}`);
+
+  if (severity !== 'INFO') {
+    threatStats.recentAlerts.unshift({
+      timestamp,
       ip,
-      userAgent
+      type: eventType,
+      details: `${details} (${path})`,
+      severity
     });
-    console.log(`[AUDIT LOGGED] Action: ${action} | Details: ${details} | User: ${email}`);
-  } catch (err: any) {
-    console.error('Failed to write audit log in Firestore:', err.message);
+    if (threatStats.recentAlerts.length > 100) {
+      threatStats.recentAlerts.pop();
+    }
+  }
+
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      await setDoc(doc(db, 'security_logs', logEntry.id), logEntry);
+      // Also update audit_logs for dashboard backwards-compatibility
+      await setDoc(doc(db, 'audit_logs', logEntry.id), {
+        id: logEntry.id,
+        timestamp,
+        action: eventType,
+        details,
+        email,
+        ip,
+        userAgent
+      });
+    } catch (err: any) {
+      console.warn('Security logging write to Firestore skipped/failed:', err.message);
+    }
   }
 }
+
+// Backward compatible alias
+async function logServerAuditActivity(req: express.Request, action: string, details: string, explicitEmail?: string) {
+  const severity: 'INFO' | 'WARN' | 'HIGH' = action.includes('ERROR') || action.includes('FAIL') ? 'WARN' : 'INFO';
+  await logSecurityEvent(req, action, severity, details, explicitEmail);
+}
+
+// Suspicious Traffic, Scraper & Malicious Signature Detector Middleware
+app.use(async (req, res, next) => {
+  threatStats.totalScans++;
+  const rawIp = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown') as string;
+  const ip = typeof rawIp === 'string' ? rawIp.split(',')[0].trim() : 'unknown';
+  const userAgent = (req.headers['user-agent'] || '') as string;
+  const url = req.url || '';
+  const queryStr = JSON.stringify(req.query || {});
+  const bodyStr = req.body && typeof req.body === 'object' ? JSON.stringify(req.body) : '';
+
+  // 1. Check for known vulnerability scanner User-Agents
+  for (const scannerRegex of SUSPICIOUS_USER_AGENTS) {
+    if (scannerRegex.test(userAgent)) {
+      threatStats.blockedAttacks++;
+      await logSecurityEvent(req, 'SUSPICIOUS_SCANNER_DETECTED', 'HIGH', `Known attack scanner detected: ${userAgent}`, undefined, { ip });
+      return res.status(403).json({ error: 'Access Denied: Malicious tool signature detected.' });
+    }
+  }
+
+  // 2. Check for known aggressive automated scraping bots targeting sensitive routes
+  if (req.path.startsWith('/api/') && !req.path.startsWith('/api/products') && !req.path.startsWith('/api/settings')) {
+    for (const scraperRegex of SCRAPER_BOT_USER_AGENTS) {
+      if (scraperRegex.test(userAgent)) {
+        threatStats.scraperBlocks++;
+        await logSecurityEvent(req, 'AUTOMATED_SCRAPER_BLOCKED', 'HIGH', `Automated scraper bot blocked on ${req.path}: ${userAgent}`, undefined, { ip, path: req.path });
+        return res.status(403).json({ error: 'Access Denied: Automated bot scraping not permitted.' });
+      }
+    }
+  }
+
+  // 3. Check for malicious URI / parameter patterns (SQLi, XSS, Path traversal, sensitive files)
+  const fullPayload = `${url} ${queryStr} ${bodyStr}`;
+  for (const pattern of SUSPICIOUS_PATTERNS) {
+    if (pattern.test(fullPayload)) {
+      threatStats.blockedAttacks++;
+      await logSecurityEvent(req, 'SUSPICIOUS_PAYLOAD_DETECTED', 'CRITICAL', `Malicious attack pattern matched: ${pattern}`, undefined, { url, pattern: pattern.toString() });
+      return res.status(400).json({ error: 'Request rejected due to potentially malicious payload syntax.' });
+    }
+  }
+
+  next();
+});
 
 function getBaseUrl(req: express.Request): string {
   if (process.env.APP_URL) {
@@ -522,20 +717,214 @@ function getDocId(email: string) {
   return crypto.createHmac('sha256', secret).update(email).digest('hex');
 }
 
-// Admin and Auth Rate Limiters
+const BCRYPT_SALT_ROUNDS = 12;
+
+// Password Strength Validator
+function validatePasswordStrength(password: string): { isValid: boolean; message?: string } {
+  if (!password || typeof password !== 'string') {
+    return { isValid: false, message: 'Password is required.' };
+  }
+  if (password.length < 8) {
+    return { isValid: false, message: 'Password must be at least 8 characters long.' };
+  }
+  if (!/[a-z]/.test(password)) {
+    return { isValid: false, message: 'Password must contain at least one lowercase letter.' };
+  }
+  if (!/[A-Z]/.test(password)) {
+    return { isValid: false, message: 'Password must contain at least one uppercase letter.' };
+  }
+  if (!/[0-9]/.test(password) && !/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+    return { isValid: false, message: 'Password must contain at least one number or special symbol.' };
+  }
+  return { isValid: true };
+}
+
+// Admin and Auth Rate Limiters with Security Event Logging
 import rateLimit from 'express-rate-limit';
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 requests per windowMs
-  message: { error: 'Too many authentication attempts from this IP, please try again after 15 minutes.' }
+  max: 15, // limit each IP to 15 auth requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next, options) => {
+    threatStats.rateLimitBlocks++;
+    logSecurityEvent(req, 'RATE_LIMIT_EXCEEDED', 'WARN', `Auth endpoint rate limit exceeded on ${req.originalUrl || req.path}`);
+    res.status(options.statusCode).json({ success: false, error: 'Too many authentication attempts from this IP, please try again after 15 minutes.' });
+  }
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10, // limit login attempts
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next, options) => {
+    threatStats.rateLimitBlocks++;
+    logSecurityEvent(req, 'RATE_LIMIT_EXCEEDED', 'HIGH', `Login brute-force throttle triggered on ${req.originalUrl || req.path}`);
+    res.status(options.statusCode).json({ success: false, error: 'Too many login attempts. For your security, this IP has been temporarily throttled. Please try again after 15 minutes.' });
+  }
+});
+
+// Account Creation / Registration Rate Limiter (Protects against mass bot registration)
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour window
+  max: 5, // maximum 5 account registrations per hour per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next, options) => {
+    threatStats.rateLimitBlocks++;
+    logSecurityEvent(req, 'REGISTRATION_RATE_LIMIT', 'HIGH', `Account creation rate limit exceeded on ${req.originalUrl || req.path}`);
+    res.status(options.statusCode).json({ success: false, error: 'Too many account registrations from this network. Please try again later.' });
+  }
+});
+
+const passwordResetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next, options) => {
+    threatStats.rateLimitBlocks++;
+    logSecurityEvent(req, 'RATE_LIMIT_EXCEEDED', 'WARN', `Password reset rate limit exceeded on ${req.originalUrl || req.path}`);
+    res.status(options.statusCode).json({ success: false, error: 'Too many password reset requests. Please wait a few minutes before trying again.' });
+  }
+});
+
+// Order Placement Rate Limiter (Protects against checkout spam and carding attacks)
+const orderLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // maximum 10 checkout orders per 15 minutes per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next, options) => {
+    threatStats.rateLimitBlocks++;
+    logSecurityEvent(req, 'ORDER_RATE_LIMIT', 'HIGH', `Order submission rate limit exceeded on ${req.originalUrl || req.path}`);
+    res.status(options.statusCode).json({ success: false, message: 'Too many order attempts. Please slow down and try again shortly.' });
+  }
+});
+
+// Catalog & Public Scrape Rate Limiter (Prevents automated product scrapers)
+const catalogLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 80, // limit catalog queries to prevent data scraping
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next, options) => {
+    threatStats.rateLimitBlocks++;
+    threatStats.scraperBlocks++;
+    logSecurityEvent(req, 'SCRAPING_RATE_LIMIT', 'WARN', `Catalog queries rate limit exceeded on ${req.originalUrl || req.path}`);
+    res.status(options.statusCode).json({ success: false, error: 'Too many catalog requests. Please wait a moment.' });
+  }
+});
+
+// Newsletter & Waitlist Subscription Rate Limiter
+const newsletterLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next, options) => {
+    threatStats.rateLimitBlocks++;
+    threatStats.botSpamBlocks++;
+    logSecurityEvent(req, 'NEWSLETTER_SPAM_BLOCKED', 'WARN', `Newsletter subscription rate limit exceeded on ${req.originalUrl || req.path}`);
+    res.status(options.statusCode).json({ success: false, message: 'Too many subscription requests. Please try again later.' });
+  }
+});
+
+// Contact & Support Form Rate Limiter
+const contactLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next, options) => {
+    threatStats.rateLimitBlocks++;
+    threatStats.botSpamBlocks++;
+    logSecurityEvent(req, 'CONTACT_SPAM_BLOCKED', 'WARN', `Contact form rate limit exceeded on ${req.originalUrl || req.path}`);
+    res.status(options.statusCode).json({ success: false, message: 'Too many contact messages submitted. Please try again after 15 minutes.' });
+  }
+});
+
+// AI Generation / Tech Advisor Rate Limiter (Protects Gemini API quotas & prevents abuse)
+const aiLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 15, // maximum 15 AI queries per 10 minutes per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next, options) => {
+    threatStats.rateLimitBlocks++;
+    threatStats.aiAbuseBlocks++;
+    logSecurityEvent(req, 'AI_QUOTA_RATE_LIMIT', 'WARN', `AI generation quota exceeded on ${req.originalUrl || req.path}`);
+    res.status(options.statusCode).json({ success: false, message: 'AI advisor quota reached for this session. Please try again in a few minutes.' });
+  }
 });
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100, // limit general API routes
-  message: { error: 'Too many requests, please try again later.' }
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res, next, options) => {
+    threatStats.rateLimitBlocks++;
+    res.status(options.statusCode).json({ success: false, error: 'Too many requests, please try again later.' });
+  }
 });
+
+// Anti-Bot Honeypot Detector Middleware
+// Bots autofilling hidden fields (_hp_website, _hp_company, honeypot) are immediately trapped and blocked
+const honeypotBotDetector = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const body = req.body || {};
+  const honeypotValue = body._hp_website || body._hp_company || body.honeypot || body.hp_token;
+  if (honeypotValue && typeof honeypotValue === 'string' && honeypotValue.trim().length > 0) {
+    threatStats.botSpamBlocks++;
+    threatStats.honeypotBlocks++;
+    logSecurityEvent(req, 'BOT_HONEYPOT_TRIGGERED', 'HIGH', `Automated bot filled hidden honeypot trap on ${req.path}`, undefined, { honeypotValue });
+    // Return a fake generic success to silently sinkhole the bot without giving clues
+    return res.status(200).json({ success: true, message: 'Request processed successfully.' });
+  }
+  next();
+};
+
+// Lazy Gemini API Client Initialization
+let geminiClient: GoogleGenAI | null = null;
+function getGeminiClient(): GoogleGenAI | null {
+  if (!geminiClient) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (apiKey && apiKey.trim().length > 0) {
+      geminiClient = new GoogleGenAI({ apiKey: apiKey.trim() });
+    }
+  }
+  return geminiClient;
+}
+
+// Middleware to verify User JWT
+const verifyUserToken = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.replace('Bearer ', '').trim();
+  
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'Unauthorized: Authentication token required.' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    if (!decoded || (!decoded.userId && !decoded.id && !decoded.email)) {
+      return res.status(401).json({ success: false, message: 'Invalid authentication token structure.' });
+    }
+    (req as any).user = {
+      userId: decoded.userId || decoded.backendId || decoded.id,
+      email: decoded.email ? decoded.email.toLowerCase() : null,
+      role: decoded.role || 'user'
+    };
+    next();
+  } catch (err: any) {
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ success: false, message: 'Session expired. Please log in again.' });
+    }
+    return res.status(401).json({ success: false, message: 'Invalid or expired authentication token.' });
+  }
+};
 
 // Middleware to verify Admin JWT
 const verifyAdminToken = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -608,6 +997,7 @@ const verifyAdminToken = async (req: express.Request, res: express.Response, nex
     
     // Check if it's the admin email
     if (decoded.email !== 'idowutosin70@gmail.com') {
+      logSecurityEvent(req, 'ADMIN_ACCESS_DENIED', 'HIGH', `Unauthorized admin access attempt by ${decoded.email}`, decoded.email);
       return res.status(403).json({ error: 'Forbidden: Admin access required.' });
     }
     
@@ -616,7 +1006,8 @@ const verifyAdminToken = async (req: express.Request, res: express.Response, nex
       id: decoded.userId || decoded.backendId || 'admin-id'
     };
     next();
-  } catch (err) {
+  } catch (err: any) {
+    logSecurityEvent(req, 'ADMIN_INVALID_TOKEN', 'WARN', `Invalid administrative token presentation: ${err.message}`);
     return res.status(401).json({ error: 'Invalid or expired administrative token.' });
   }
 };
@@ -710,8 +1101,8 @@ let cachedSettingsList: any = null;
 let cachedSettingsExpiry = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache
 
-// 1. GET ALL PRODUCTS (WITH SERVER-SIDE CACHING)
-app.get('/api/products', apiLimiter, async (req, res) => {
+// 1. GET ALL PRODUCTS (WITH SERVER-SIDE CACHING & SCRAPING RATE LIMIT)
+app.get('/api/products', catalogLimiter, async (req, res) => {
   const now = Date.now();
   if (cachedProductsList && now < cachedProductsExpiry) {
     return res.json(cachedProductsList);
@@ -738,7 +1129,7 @@ app.get('/api/products', apiLimiter, async (req, res) => {
 });
 
 // 2. GET GLOBAL GLOBAL SETTINGS (WITH SERVER-SIDE CACHING)
-app.get('/api/settings', async (req, res) => {
+app.get('/api/settings', catalogLimiter, async (req, res) => {
   const now = Date.now();
   if (cachedSettingsList && now < cachedSettingsExpiry) {
     return res.json(cachedSettingsList);
@@ -762,7 +1153,32 @@ app.get('/api/settings', async (req, res) => {
   return res.json({});
 });
 
-app.post('/api/products/:productId/reviews', async (req, res) => {
+// Update Hero Config & Delivery Ticker from Admin
+app.post('/api/admin/hero-config', async (req, res) => {
+  try {
+    const { heroConfig } = req.body;
+    if (!heroConfig) {
+      return res.status(400).json({ error: 'heroConfig is required' });
+    }
+    const db = getFirebaseDb();
+    if (db) {
+      try {
+        await setDoc(doc(db, 'settings', 'global'), { heroConfig }, { merge: true });
+      } catch (dbErr: any) {
+        console.warn('Firestore write error in /api/admin/hero-config:', dbErr.message);
+      }
+    }
+    // Update server-side cache immediately so storefront fetches reflect changes instantly
+    cachedSettingsList = { ...(cachedSettingsList || {}), heroConfig };
+    cachedSettingsExpiry = Date.now() + CACHE_TTL_MS;
+    return res.json({ success: true, heroConfig });
+  } catch (err: any) {
+    console.error('Error updating hero config:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/products/:productId/reviews', catalogLimiter, honeypotBotDetector, async (req, res) => {
   const { productId } = req.params;
   const { author, rating, comment, date } = req.body;
   
@@ -808,6 +1224,9 @@ app.post('/api/orders/:orderId/cancel', async (req, res) => {
   }
 
   const { orderId } = req.params;
+  const tokenUserId = decoded.userId || decoded.backendId || decoded.id;
+  const tokenEmail = decoded.email ? decoded.email.toLowerCase() : null;
+
   const db = getFirebaseDb();
   if (db) {
     try {
@@ -817,8 +1236,8 @@ app.post('/api/orders/:orderId/cancel', async (req, res) => {
       const order = orderSnap.data();
       
       // Strict ownership check: only the order owner or an admin can cancel the order
-      const isOwner = (decoded.userId && (order.userId === decoded.userId || order.user_id === decoded.userId)) ||
-                      (decoded.email && order.email && order.email.toLowerCase() === decoded.email.toLowerCase());
+      const isOwner = (tokenUserId && (order.userId === tokenUserId || order.user_id === tokenUserId)) ||
+                      (tokenEmail && order.email && order.email.toLowerCase() === tokenEmail);
 
       if (decoded.role !== 'admin' && !isOwner) {
         return res.status(403).json({ error: 'Forbidden: You do not own this order' });
@@ -894,15 +1313,62 @@ app.post('/api/orders/:orderId/cancel', async (req, res) => {
       return res.status(500).json({ error: 'Internal server error' });
     }
   }
+
+  // Fallback in-memory order cancellation with strict IDOR ownership checks
+  const fallbackOrder = fallbackOrders.find(o => o.id === orderId);
+  if (!fallbackOrder) {
+    return res.status(404).json({ error: 'Order not found' });
+  }
+
+  const isFallbackOwner = (tokenUserId && (fallbackOrder.user_id === tokenUserId || (fallbackOrder as any).userId === tokenUserId)) ||
+                          (tokenEmail && fallbackOrder.email && fallbackOrder.email.toLowerCase() === tokenEmail);
+
+  if (decoded.role !== 'admin' && !isFallbackOwner) {
+    return res.status(403).json({ error: 'Forbidden: You do not own this order' });
+  }
+
+  const fbRawDate = fallbackOrder.orderDate || (fallbackOrder as any).order_date;
+  const fbOrderTime = fbRawDate ? new Date(fbRawDate).getTime() : Date.now();
+  const fbNow = Date.now();
+  if (!isNaN(fbOrderTime) && (fbNow - fbOrderTime > 60 * 60 * 1000) && decoded.role !== 'admin') {
+    return res.status(400).json({ error: 'Order cannot be cancelled after 1 hour' });
+  }
+
+  const cancellableStatuses = ['Confirmed', 'Pending', 'Processing'];
+  if (!cancellableStatuses.includes(fallbackOrder.status) && decoded.role !== 'admin') {
+    return res.status(400).json({ error: `Order status is '${fallbackOrder.status}' and cannot be cancelled.` });
+  }
+
+  fallbackOrder.status = 'Cancelled';
+  (fallbackOrder as any).cancelledBy = decoded.role === 'admin' ? 'admin' : 'client';
+  (fallbackOrder as any).cancellationReason = req.body?.reason || 'Cancelled by customer via self-service portal';
+  (fallbackOrder as any).cancelledAt = new Date().toISOString();
+
   return res.json({ success: true });
 });
-// 2. CREATE NEW ORDER
-app.post('/api/orders', apiLimiter, async (req, res) => {
+// 2. CREATE NEW ORDER (Rate limited & Bot protected)
+app.post('/api/orders', orderLimiter, honeypotBotDetector, async (req, res) => {
   const { fullname, email, address, paymentOption, total, items, userId } = req.body;
   const orderId = `TZ${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
   const orderDate = new Date();
   const expectedDeliveryDate = new Date();
   expectedDeliveryDate.setDate(expectedDeliveryDate.getDate() + 3);
+
+  // Authenticate user token if provided to prevent IDOR / spoofing another user's ID
+  let authenticatedUserId: string | null = null;
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.replace('Bearer ', '');
+  if (token) {
+    try {
+      const decoded: any = jwt.verify(token, JWT_SECRET);
+      authenticatedUserId = decoded.userId || decoded.backendId || decoded.id || null;
+    } catch (e) {
+      // Invalid token, treat as unauthenticated
+    }
+  }
+
+  // Bind order strictly to authenticated user; prevent arbitrary unauthenticated user ID injection
+  const effectiveUserId = authenticatedUserId || (userId && userId === authenticatedUserId ? userId : null);
 
   const db = getFirebaseDb();
   if (db) {
@@ -951,8 +1417,8 @@ app.post('/api/orders', apiLimiter, async (req, res) => {
         const orderRef = doc(db, 'orders', orderId);
         transaction.set(orderRef, {
           id: orderId,
-          user_id: userId || null,
-          userId: userId || null,
+          user_id: effectiveUserId,
+          userId: effectiveUserId,
           fullname,
           email,
           address,
@@ -1122,7 +1588,8 @@ app.post('/api/orders', apiLimiter, async (req, res) => {
 
   const newOrder = {
     id: orderId,
-    user_id: userId || null,
+    user_id: effectiveUserId,
+    userId: effectiveUserId,
     fullname,
     email,
     address,
@@ -1510,6 +1977,108 @@ app.patch('/api/admin/orders/:orderId/status', verifyAdminToken, async (req, res
   return res.json({ success: true, orderId, status });
 });
 
+// 6b. ADMIN: BATCH UPDATE ORDER STATUS
+app.patch('/api/admin/orders/batch-status', verifyAdminToken, async (req, res) => {
+  const { orderIds, status } = req.body;
+  if (!Array.isArray(orderIds) || orderIds.length === 0 || !status) {
+    return res.status(400).json({ success: false, message: 'orderIds array and status are required' });
+  }
+
+  const validStatuses = ['Accepted', 'In Transit', 'Picked Up', 'Delivered', 'Cancelled', 'Processing', 'Confirmed', 'Pending'];
+  if (!validStatuses.includes(status)) {
+    return res.status(400).json({ success: false, message: 'Invalid order status provided' });
+  }
+
+  const adb = getAdminDb();
+  const db = getFirebaseDb();
+
+  // Update in Firestore
+  if (adb) {
+    try {
+      const batch = adb.batch();
+      for (const id of orderIds) {
+        const ref = adb.collection('orders').doc(id);
+        batch.update(ref, { status, updatedAt: new Date().toISOString() });
+      }
+      await batch.commit();
+    } catch (e: any) {
+      console.warn("Batch order update via admin DB failed, trying individual updates:", e.message);
+    }
+  } else if (db) {
+    try {
+      const { writeBatch } = await import('firebase/firestore');
+      const batch = writeBatch(db);
+      for (const id of orderIds) {
+        batch.update(doc(db, 'orders', id), { status });
+      }
+      await batch.commit();
+    } catch (e: any) {
+      console.warn("Batch order update via client DB fallback:", e.message);
+    }
+  }
+
+  // Update in fallback
+  for (const id of orderIds) {
+    const o = fallbackOrders.find(fo => fo.id === id);
+    if (o) {
+      o.status = status;
+    }
+  }
+
+  await logServerAuditActivity(req, 'BATCH_ORDER_UPDATE', `Batch updated status of ${orderIds.length} orders to "${status}"`);
+  return res.json({ success: true, count: orderIds.length, status, orderIds });
+});
+
+// 6c. ADMIN: BATCH UPDATE PRODUCT STOCK
+app.patch('/api/admin/products/batch-stock', verifyAdminToken, async (req, res) => {
+  const { updates } = req.body; // updates: { id: string, stock: number }[]
+  if (!Array.isArray(updates) || updates.length === 0) {
+    return res.status(400).json({ success: false, message: 'updates array is required' });
+  }
+
+  const adb = getAdminDb();
+  const db = getFirebaseDb();
+
+  if (adb) {
+    try {
+      const batch = adb.batch();
+      for (const u of updates) {
+        if (u.id && typeof u.stock === 'number') {
+          const ref = adb.collection('products').doc(u.id);
+          batch.update(ref, { stock: Math.max(0, u.stock), updatedAt: new Date().toISOString() });
+        }
+      }
+      await batch.commit();
+    } catch (e: any) {
+      console.warn("Batch product stock update via admin DB failed:", e.message);
+    }
+  } else if (db) {
+    try {
+      const { writeBatch } = await import('firebase/firestore');
+      const batch = writeBatch(db);
+      for (const u of updates) {
+        if (u.id && typeof u.stock === 'number') {
+          batch.update(doc(db, 'products', u.id), { stock: Math.max(0, u.stock) });
+        }
+      }
+      await batch.commit();
+    } catch (e: any) {
+      console.warn("Batch product stock update via client DB fallback:", e.message);
+    }
+  }
+
+  // Update in fallback
+  for (const u of updates) {
+    const p = fallbackProducts.find(fp => fp.id === u.id);
+    if (p && typeof u.stock === 'number') {
+      p.stock = Math.max(0, u.stock);
+    }
+  }
+
+  await logServerAuditActivity(req, 'BATCH_STOCK_UPDATE', `Batch updated stock for ${updates.length} products`);
+  return res.json({ success: true, count: updates.length, updates });
+});
+
 // 7. ADMIN: AUTHENTICATE SYSTEM ACCESS
 app.post('/api/admin/authenticate', authLimiter, (req, res) => {
   const { key } = req.body;
@@ -1547,6 +2116,31 @@ app.post('/api/products', verifyAdminToken, async (req, res) => {
   fallbackProducts.push({ ...newProduct, reviews: [] });
   await logServerAuditActivity(req, 'PRODUCT_CREATE', `Created product "${newProduct.name}" (ID: ${newProduct.id}) with initial stock ${newProduct.stock} (Fallback)`);
   return res.json({ success: true, product: newProduct });
+});
+
+// 8b. ADMIN: UPDATE PRODUCT (INCLUDING MULTIPLE IMAGES)
+app.put('/api/products/:productId', verifyAdminToken, async (req, res) => {
+  const { productId } = req.params;
+  const updatedProduct = req.body;
+
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      await updateDoc(doc(db, 'products', productId), updatedProduct);
+      await logServerAuditActivity(req, 'PRODUCT_UPDATE', `Updated product "${updatedProduct.name || productId}" with ${updatedProduct.images?.length || 1} images`);
+      return res.json({ success: true, product: updatedProduct });
+    } catch (err: any) {
+      console.log('Firestore fallback for updating product:', err.message);
+    }
+  }
+
+  // local fallback
+  const idx = fallbackProducts.findIndex(p => p.id === productId);
+  if (idx !== -1) {
+    fallbackProducts[idx] = { ...fallbackProducts[idx], ...updatedProduct };
+  }
+  await logServerAuditActivity(req, 'PRODUCT_UPDATE', `Updated product "${updatedProduct.name || productId}" (Fallback)`);
+  return res.json({ success: true, product: updatedProduct });
 });
 
 // 8a. ADMIN: UPLOAD PRODUCT IMAGE
@@ -1651,19 +2245,30 @@ app.get('/api/firestore-test', async (req, res) => {
   }
 });
 
-// 11. USER REGISTRATION
-app.post('/api/auth/register', authLimiter, async (req, res) => {
+// 11. USER REGISTRATION (Protected against bot spam & brute registrations)
+app.post('/api/auth/register', registerLimiter, honeypotBotDetector, async (req, res) => {
   const { email, password, firstName, surname, address, phone, clientGeo } = req.body;
   if (!email || !password) return res.status(400).json({ success: false, message: 'Email and password required' });
 
+  // Enforce password strength
+  const passCheck = validatePasswordStrength(password);
+  if (!passCheck.isValid) {
+    return res.status(400).json({ success: false, message: passCheck.message });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
   const userId = `U${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-  const hashedPassword = await bcrypt.hash(password, 10);
+  const hashedPassword = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
+
+  // Email verification token (valid for 24 hours)
+  const verificationToken = jwt.sign({ userId, email: cleanEmail, purpose: 'email_verification' }, JWT_SECRET, { expiresIn: '24h' });
+  const verifyLink = `${getBaseUrl(req)}/?view=verify-email&token=${verificationToken}`;
 
   const db = getFirebaseDb();
   if (db) {
     try {
-      // Create user
-      const existQ = query(collection(db, 'users'), where('email', '==', email || ''));
+      // Check existing user
+      const existQ = query(collection(db, 'users'), where('email', '==', cleanEmail));
       const existSnap = await getDocs(existQ);
       if (!existSnap.empty) return res.status(400).json({ success: false, message: 'Email already registered' });
 
@@ -1672,40 +2277,41 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
         geo = await getRequestGeo(req);
       }
       await setDoc(doc(db, 'users', userId), {
-        id: userId, email, password: hashedPassword,
-        firstname: firstName, lastname: surname, address, phone, role: 'user',
+        id: userId,
+        email: cleanEmail,
+        password: hashedPassword,
+        firstname: firstName,
+        lastname: surname,
+        address: address || '',
+        phone: phone || '',
+        role: 'user',
+        emailVerified: false,
         country: geo.country,
         region: geo.region,
         city: geo.city,
         createdAt: new Date().toISOString()
       });
 
-      const token = jwt.sign({ userId, email, role: 'user' }, JWT_SECRET, { expiresIn: '7d' });
+      const token = jwt.sign({ userId, email: cleanEmail, role: 'user' }, JWT_SECRET, { expiresIn: '7d' });
       
-      // Send welcome email
-      const welcomeSubject = "Welcome to Tizzitech!";
+      // Send welcome and verification email
+      const welcomeSubject = "Welcome to Tizzitech - Verify Your Email";
       const welcomeContent = `
         <h2 style="font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: #ffffff; margin: 0 0 16px 0; text-align: center;">Welcome, ${firstName}!</h2>
-        <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 16px;">We are absolutely thrilled to welcome you to <strong>Tizzitech Online Store</strong> — your trusted destination for premium tech accessories, premium gadgets, laptops, phones, chargers, power banks, and much more.</p>
-        <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 24px;">Our mission is to empower your digital life with quality accessories you can rely on, backed by outstanding customer service.</p>
-        <div style="background-color: #1f2937; border-radius: 8px; padding: 20px; border: 1px solid #374151; margin-bottom: 24px;">
-          <h3 style="font-size: 14px; font-weight: bold; color: #ffffff; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 1px;">Getting Started</h3>
-          <p style="font-size: 13px; color: #9ca3af; margin: 0 0 12px 0;">Your account is ready! Here is what you can do right now:</p>
-          <ul style="font-size: 13px; color: #d1d5db; margin: 0; padding-left: 20px; line-height: 1.6;">
-            <li>Browse our wide selection of laptops & mobile accessories</li>
-            <li>Build your cart with standard premium gadgets</li>
-            <li>Track all your orders and status in real-time</li>
-          </ul>
+        <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 16px;">We are thrilled to welcome you to <strong>Tizzitech Online Store</strong> — your trusted destination for laptops, gadgets, and tech accessories.</p>
+        <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 24px;">To ensure your account security and enable all order management features, please verify your email address below:</p>
+        
+        <div style="text-align: center; margin: 28px 0;">
+          <a href="${verifyLink}" style="display: inline-block; background-color: #2563eb; color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 13px 30px; border-radius: 8px; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);">Verify Email Address</a>
         </div>
-        <div style="text-align: center; margin-top: 30px; margin-bottom: 10px;">
-          <a href="${getBaseUrl(req)}" style="display: inline-block; background-color: #3b82f6; color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 12px 28px; border-radius: 8px; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);">Start Shopping Now</a>
-        </div>
+        
+        <p style="font-size: 12px; color: #9ca3af; text-align: center; margin-top: 16px;">This verification link will remain active for 24 hours. If you did not create an account, you can disregard this message.</p>
       `;
       const welcomeHtml = getPremiumTemplateHtml(welcomeSubject, welcomeContent, getBaseUrl(req));
       let deliveryStatus = 'pending';
       let emailError = null;
       try {
-        await sendEmail(email, welcomeSubject, welcomeHtml);
+        await sendEmail(cleanEmail, welcomeSubject, welcomeHtml);
         deliveryStatus = 'delivered';
       } catch (err: any) {
         console.error("Async email failed:", err);
@@ -1717,119 +2323,379 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
         await updateDoc(doc(db, 'users', userId), { deliveryStatus, emailError: emailError || null });
       } catch (e) {}
       
-      return res.json({ success: true, token, user: { id: userId, email, firstName, surname, address, phone, role: 'user' } });
+      return res.json({ 
+        success: true, 
+        token, 
+        user: { 
+          id: userId, 
+          email: cleanEmail, 
+          firstName, 
+          surname, 
+          address, 
+          phone, 
+          role: 'user',
+          emailVerified: false
+        } 
+      });
     } catch (err: any) {
       console.warn('Firestore not fully configured yet, falling back to local memory for registration.');
     }
   }
 
   // Fallback to in-memory registration
-  const existingFallbackUser = fallbackUsers.find(u => u.email === email);
+  const existingFallbackUser = fallbackUsers.find(u => u.email === cleanEmail);
   if (existingFallbackUser) return res.status(400).json({ success: false, message: 'Email already registered' });
 
-  const fallbackHashedPassword = await bcrypt.hash(password, 10);
   const userObj = {
     id: userId,
-    email,
-    password: fallbackHashedPassword,
+    email: cleanEmail,
+    password: hashedPassword,
     firstname: firstName,
     lastname: surname,
     address,
     phone,
-    role: 'user'
+    role: 'user',
+    emailVerified: false,
+    createdAt: new Date().toISOString()
   };
   fallbackUsers.push(userObj);
 
-  const token = jwt.sign({ userId, email, role: 'user' }, JWT_SECRET, { expiresIn: '7d' });
+  const token = jwt.sign({ userId, email: cleanEmail, role: 'user' }, JWT_SECRET, { expiresIn: '7d' });
   
-  // Send welcome email
-  const welcomeSubject = "Welcome to Tizzitech!";
+  const welcomeSubject = "Welcome to Tizzitech - Verify Your Email";
   const welcomeContent = `
     <h2 style="font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: #ffffff; margin: 0 0 16px 0; text-align: center;">Welcome, ${firstName}!</h2>
-    <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 16px;">We are absolutely thrilled to welcome you to <strong>Tizzitech Online Store</strong> — your trusted destination for premium tech accessories, premium gadgets, laptops, phones, chargers, power banks, and much more.</p>
-    <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 24px;">Our mission is to empower your digital life with quality accessories you can rely on, backed by outstanding customer service.</p>
-    <div style="background-color: #1f2937; border-radius: 8px; padding: 20px; border: 1px solid #374151; margin-bottom: 24px;">
-      <h3 style="font-size: 14px; font-weight: bold; color: #ffffff; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 1px;">Getting Started</h3>
-      <p style="font-size: 13px; color: #9ca3af; margin: 0 0 12px 0;">Your account is ready! Here is what you can do right now:</p>
-      <ul style="font-size: 13px; color: #d1d5db; margin: 0; padding-left: 20px; line-height: 1.6;">
-        <li>Browse our wide selection of laptops & mobile accessories</li>
-        <li>Build your cart with standard premium gadgets</li>
-        <li>Track all your orders and status in real-time</li>
-      </ul>
-    </div>
-    <div style="text-align: center; margin-top: 30px; margin-bottom: 10px;">
-      <a href="${process.env.APP_URL || 'https://tizzitech.com.ng'}" style="display: inline-block; background-color: #3b82f6; color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 12px 28px; border-radius: 8px; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);">Start Shopping Now</a>
+    <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 16px;">We are thrilled to welcome you to <strong>Tizzitech Online Store</strong>.</p>
+    <div style="text-align: center; margin: 28px 0;">
+      <a href="${verifyLink}" style="display: inline-block; background-color: #2563eb; color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 13px 30px; border-radius: 8px;">Verify Email Address</a>
     </div>
   `;
-  const welcomeHtml = getPremiumTemplateHtml(welcomeSubject, welcomeContent, process.env.APP_URL || 'https://tizzitech.com.ng');
-  await sendEmail(email, welcomeSubject, welcomeHtml).catch(err => console.error("Async email failed:", err));
+  const welcomeHtml = getPremiumTemplateHtml(welcomeSubject, welcomeContent, getBaseUrl(req));
+  await sendEmail(cleanEmail, welcomeSubject, welcomeHtml).catch(err => console.error("Async email failed:", err));
   
-  return res.json({ success: true, token, user: { id: userId, email, firstName, surname, address, phone, role: 'user' } });
+  await logSecurityEvent(req, 'AUTH_REGISTER_SUCCESS', 'INFO', `New user registered account successfully`, cleanEmail);
+
+  return res.json({ 
+    success: true, 
+    token, 
+    user: { 
+      id: userId, 
+      email: cleanEmail, 
+      firstName, 
+      surname, 
+      address, 
+      phone, 
+      role: 'user', 
+      emailVerified: false 
+    } 
+  });
 });
 
-app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
+// PASSWORD RESET REQUEST (Rate-limited, single-use, 15m expiration, bot protected)
+app.post('/api/auth/reset-password', passwordResetLimiter, honeypotBotDetector, async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ success: false, message: 'Email required' });
 
-  // Generate 5-minute token
-  const resetToken = jwt.sign({ email }, JWT_SECRET, { expiresIn: '5m' });
+  const cleanEmail = email.trim().toLowerCase();
+  const resetNonce = crypto.randomBytes(24).toString('hex');
+  const resetNonceExpiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
 
-  const resetSubject = "Password Reset Request - Tizzitech";
-  const resetHtml = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background-color: #000; color: #fff; padding: 20px;">
-      <h2 style="color: #007bff;">Password Reset</h2>
-      <p>We received a request to reset your password for your Tizzitech account.</p>
-      <p>If you didn't make this request, you can safely ignore this email.</p>
-      <p>This link is valid for 5 minutes.</p>
-      <p>Otherwise, click the link below to reset your password:</p>
-      <br>
-      <a href="${getBaseUrl(req)}/?view=reset-password&token=${resetToken}" style="display: inline-block; padding: 10px 20px; background-color: #007bff; color: #fff; text-decoration: none; border-radius: 5px;">Reset Password</a>
-      <br><br>
-      <p>Best regards,</p>
-      <p>The Tizzitech Team</p>
-    </div>
-  `;
-  await sendEmail(email, resetSubject, resetHtml).catch(err => console.error("Async email failed:", err));
+  // Generate 15-minute token with purpose and nonce
+  const resetToken = jwt.sign({ email: cleanEmail, nonce: resetNonce, purpose: 'password_reset' }, JWT_SECRET, { expiresIn: '15m' });
 
+  const db = getFirebaseDb();
+  let userFound = false;
+
+  if (db) {
+    try {
+      const existQ = query(collection(db, 'users'), where('email', '==', cleanEmail));
+      const existSnap = await getDocs(existQ);
+      if (!existSnap.empty) {
+        userFound = true;
+        const userRef = existSnap.docs[0].ref;
+        await updateDoc(userRef, {
+          resetNonce,
+          resetNonceExpiresAt
+        });
+      }
+    } catch (e) {
+      console.warn('Could not store reset token in Firestore:', e);
+    }
+  }
+
+  if (!userFound) {
+    const fallbackUser = fallbackUsers.find(u => u.email === cleanEmail);
+    if (fallbackUser) {
+      userFound = true;
+      (fallbackUser as any).resetNonce = resetNonce;
+      (fallbackUser as any).resetNonceExpiresAt = resetNonceExpiresAt;
+    }
+  }
+
+  if (userFound) {
+    const resetSubject = "Password Reset Request - Tizzitech";
+    const resetContent = `
+      <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 16px;">Password Reset Request</h2>
+      <p style="font-size: 14px; color: #d1d5db; line-height: 1.6; margin-bottom: 16px;">We received a request to reset your password for your Tizzitech account.</p>
+      <p style="font-size: 14px; color: #d1d5db; line-height: 1.6; margin-bottom: 24px;">For your security, this password reset link is single-use and will expire in <strong>15 minutes</strong>.</p>
+      <div style="text-align: center; margin: 24px 0;">
+        <a href="${getBaseUrl(req)}/?view=reset-password&token=${resetToken}" style="display: inline-block; padding: 12px 28px; background-color: #2563eb; color: #ffffff; font-weight: bold; text-decoration: none; border-radius: 8px; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);">Reset Password</a>
+      </div>
+      <p style="font-size: 12px; color: #9ca3af; margin-top: 20px;">If you did not request this password reset, please ignore this email or contact support if you suspect unauthorized access.</p>
+    `;
+    const resetHtml = getPremiumTemplateHtml(resetSubject, resetContent, getBaseUrl(req));
+    await sendEmail(cleanEmail, resetSubject, resetHtml).catch(err => console.error("Async email failed:", err));
+  }
+
+  await logSecurityEvent(req, 'AUTH_RESET_REQUESTED', 'INFO', `Password reset token requested`, cleanEmail);
+
+  // Consistent message regardless of user existence to protect against user enumeration
   return res.json({ success: true, message: 'If the email exists, a password reset link has been sent.' });
 });
 
-app.post('/api/auth/update-password', async (req, res) => {
+// PASSWORD RESET CONFIRMATION (Single-use verification)
+app.post('/api/auth/update-password', authLimiter, async (req, res) => {
   const { token, newPassword } = req.body;
   if (!token || !newPassword) return res.status(400).json({ success: false, message: 'Token and new password required' });
   
+  // Validate password strength
+  const passCheck = validatePasswordStrength(newPassword);
+  if (!passCheck.isValid) {
+    return res.status(400).json({ success: false, message: passCheck.message });
+  }
+
   let decoded: any;
   try {
     decoded = jwt.verify(token, JWT_SECRET);
   } catch (err) {
-    return res.status(401).json({ success: false, message: 'Invalid or expired reset token' });
+    return res.status(401).json({ success: false, message: 'Invalid or expired password reset link.' });
   }
 
-  const email = decoded.email;
-  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  if (decoded.purpose !== 'password_reset' || !decoded.email || !decoded.nonce) {
+    return res.status(401).json({ success: false, message: 'Invalid password reset token format.' });
+  }
+
+  const email = decoded.email.toLowerCase();
+  const tokenNonce = decoded.nonce;
+  const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
   
   const db = getFirebaseDb();
   if (db) {
     try {
-      const existQ = query(collection(db, 'users'), where('email', '==', email || ''));
+      const existQ = query(collection(db, 'users'), where('email', '==', email));
       const existSnap = await getDocs(existQ);
       if (!existSnap.empty) {
+        const userData = existSnap.docs[0].data();
         const userRef = existSnap.docs[0].ref;
-        await updateDoc(userRef, { password: hashedPassword });
-        return res.json({ success: true, message: 'Password updated successfully' });
+
+        // Verify single-use nonce and expiry
+        if (!userData.resetNonce || userData.resetNonce !== tokenNonce) {
+          return res.status(401).json({ success: false, message: 'This password reset link has already been used or is invalid.' });
+        }
+        if (userData.resetNonceExpiresAt && Date.now() > userData.resetNonceExpiresAt) {
+          return res.status(401).json({ success: false, message: 'This password reset link has expired. Please request a new one.' });
+        }
+
+        // Invalidate reset nonce and set new password
+        await updateDoc(userRef, { 
+          password: hashedPassword,
+          resetNonce: null,
+          resetNonceExpiresAt: null,
+          passwordChangedAt: new Date().toISOString()
+        });
+        await logSecurityEvent(req, 'AUTH_RESET_SUCCESS', 'INFO', `User completed password reset via token`, email);
+        return res.json({ success: true, message: 'Password updated successfully! You can now log in.' });
       }
     } catch (e) {}
   }
   
   const fallbackUser = fallbackUsers.find(u => u.email === email);
   if (fallbackUser) {
+    const fUser = fallbackUser as any;
+    if (!fUser.resetNonce || fUser.resetNonce !== tokenNonce) {
+      return res.status(401).json({ success: false, message: 'This password reset link has already been used or is invalid.' });
+    }
+    if (fUser.resetNonceExpiresAt && Date.now() > fUser.resetNonceExpiresAt) {
+      return res.status(401).json({ success: false, message: 'This password reset link has expired. Please request a new one.' });
+    }
+
     fallbackUser.password = hashedPassword;
-    return res.json({ success: true, message: 'Password updated successfully' });
+    fUser.resetNonce = null;
+    fUser.resetNonceExpiresAt = null;
+    fUser.passwordChangedAt = new Date().toISOString();
+    await logSecurityEvent(req, 'AUTH_RESET_SUCCESS', 'INFO', `User completed password reset via token (fallback)`, email);
+    return res.json({ success: true, message: 'Password updated successfully! You can now log in.' });
   }
 
-  return res.status(404).json({ success: false, message: 'User not found' });
+  return res.status(404).json({ success: false, message: 'User account not found.' });
 });
-app.post('/api/auth/google', authLimiter, async (req, res) => {
+
+// AUTHENTICATED USER PASSWORD CHANGE
+app.post('/api/auth/change-password', authLimiter, verifyUserToken, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  const user = (req as any).user;
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ success: false, message: 'Current password and new password are required.' });
+  }
+
+  // Validate new password strength
+  const passCheck = validatePasswordStrength(newPassword);
+  if (!passCheck.isValid) {
+    return res.status(400).json({ success: false, message: passCheck.message });
+  }
+
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      const existQ = query(collection(db, 'users'), where('email', '==', user.email));
+      const existSnap = await getDocs(existQ);
+      if (!existSnap.empty) {
+        const userData = existSnap.docs[0].data();
+        const userRef = existSnap.docs[0].ref;
+
+        const isMatch = await bcrypt.compare(currentPassword, userData.password || '');
+        if (!isMatch) {
+          await logSecurityEvent(req, 'AUTH_PASSWORD_CHANGE_FAILED', 'WARN', `Incorrect current password on change attempt`, user.email);
+          return res.status(400).json({ success: false, message: 'Current password is incorrect.' });
+        }
+
+        const hashed = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
+        await updateDoc(userRef, {
+          password: hashed,
+          passwordChangedAt: new Date().toISOString()
+        });
+        await logSecurityEvent(req, 'AUTH_PASSWORD_CHANGED', 'INFO', `User successfully updated account password`, user.email);
+        return res.json({ success: true, message: 'Password updated successfully.' });
+      }
+    } catch (e) {}
+  }
+
+  const fallbackUser = fallbackUsers.find(u => u.email === user.email);
+  if (fallbackUser) {
+    const isMatch = await bcrypt.compare(currentPassword, fallbackUser.password || '');
+    if (!isMatch) {
+      await logSecurityEvent(req, 'AUTH_PASSWORD_CHANGE_FAILED', 'WARN', `Incorrect current password on change attempt`, user.email);
+      return res.status(400).json({ success: false, message: 'Current password is incorrect.' });
+    }
+
+    fallbackUser.password = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
+    (fallbackUser as any).passwordChangedAt = new Date().toISOString();
+    await logSecurityEvent(req, 'AUTH_PASSWORD_CHANGED', 'INFO', `User successfully updated account password`, user.email);
+    return res.json({ success: true, message: 'Password updated successfully.' });
+  }
+
+  return res.status(404).json({ success: false, message: 'User account not found.' });
+});
+
+// EMAIL VERIFICATION VERIFY ENDPOINT
+app.post('/api/auth/verify-email', authLimiter, async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ success: false, message: 'Verification token required.' });
+
+  let decoded: any;
+  try {
+    decoded = jwt.verify(token, JWT_SECRET);
+  } catch (err) {
+    return res.status(401).json({ success: false, message: 'Verification link is invalid or has expired.' });
+  }
+
+  if (decoded.purpose !== 'email_verification' || !decoded.email) {
+    return res.status(401).json({ success: false, message: 'Invalid verification token format.' });
+  }
+
+  const email = decoded.email.toLowerCase();
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      const existQ = query(collection(db, 'users'), where('email', '==', email));
+      const existSnap = await getDocs(existQ);
+      if (!existSnap.empty) {
+        const userRef = existSnap.docs[0].ref;
+        await updateDoc(userRef, {
+          emailVerified: true,
+          emailVerifiedAt: new Date().toISOString()
+        });
+        await logSecurityEvent(req, 'AUTH_EMAIL_VERIFIED', 'INFO', `User verified email address`, email);
+        return res.json({ success: true, message: 'Your email has been successfully verified!' });
+      }
+    } catch (e) {}
+  }
+
+  const fallbackUser = fallbackUsers.find(u => u.email === email);
+  if (fallbackUser) {
+    (fallbackUser as any).emailVerified = true;
+    (fallbackUser as any).emailVerifiedAt = new Date().toISOString();
+    await logSecurityEvent(req, 'AUTH_EMAIL_VERIFIED', 'INFO', `User verified email address (fallback)`, email);
+    return res.json({ success: true, message: 'Your email has been successfully verified!' });
+  }
+
+  return res.status(404).json({ success: false, message: 'User not found.' });
+});
+
+// RESEND EMAIL VERIFICATION
+app.post('/api/auth/resend-verification', authLimiter, async (req, res) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.replace('Bearer ', '').trim();
+  let email = req.body.email;
+
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      if (decoded && decoded.email) email = decoded.email;
+    } catch (e) {}
+  }
+
+  if (!email) {
+    return res.status(400).json({ success: false, message: 'Email required.' });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  let userFound: any = null;
+
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      const existQ = query(collection(db, 'users'), where('email', '==', cleanEmail));
+      const existSnap = await getDocs(existQ);
+      if (!existSnap.empty) userFound = existSnap.docs[0].data();
+    } catch (e) {}
+  }
+
+  if (!userFound) {
+    userFound = fallbackUsers.find(u => u.email === cleanEmail);
+  }
+
+  if (!userFound) {
+    return res.status(404).json({ success: false, message: 'User not found.' });
+  }
+
+  if (userFound.emailVerified) {
+    return res.json({ success: true, message: 'Your email is already verified.' });
+  }
+
+  const verificationToken = jwt.sign({ userId: userFound.id, email: cleanEmail, purpose: 'email_verification' }, JWT_SECRET, { expiresIn: '24h' });
+  const verifyLink = `${getBaseUrl(req)}/?view=verify-email&token=${verificationToken}`;
+
+  const verifySubject = "Verify Your Email Address - Tizzitech";
+  const verifyContent = `
+    <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 16px;">Verify Your Email Address</h2>
+    <p style="font-size: 14px; color: #d1d5db; line-height: 1.6; margin-bottom: 20px;">Please click the button below to verify your email address on Tizzitech:</p>
+    <div style="text-align: center; margin: 24px 0;">
+      <a href="${verifyLink}" style="display: inline-block; padding: 12px 28px; background-color: #2563eb; color: #ffffff; font-weight: bold; text-decoration: none; border-radius: 8px; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);">Verify Email Address</a>
+    </div>
+    <p style="font-size: 12px; color: #9ca3af; margin-top: 16px;">This link is valid for 24 hours.</p>
+  `;
+  const verifyHtml = getPremiumTemplateHtml(verifySubject, verifyContent, getBaseUrl(req));
+  await sendEmail(cleanEmail, verifySubject, verifyHtml).catch(err => console.error("Async email failed:", err));
+
+  await logSecurityEvent(req, 'AUTH_VERIFY_RESENT', 'INFO', `Email verification link resent`, cleanEmail);
+
+  return res.json({ success: true, message: 'Verification link sent to your email.' });
+});
+
+// GOOGLE AUTH (Rate limited against bot account enumeration)
+app.post('/api/auth/google', registerLimiter, async (req, res) => {
   const { credential, clientGeo } = req.body;
   if (!credential) return res.status(400).json({ success: false, message: 'Google token required' });
 
@@ -1840,14 +2706,18 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
     const payload = ticket.getPayload();
     if (!payload) throw new Error('Invalid Google payload');
 
-    const email = payload.email!;
+    const email = payload.email!.toLowerCase();
     const firstName = payload.given_name || '';
     const surname = payload.family_name || '';
+
+    // Generate random secure hash to prevent empty or unhashed password access
+    const randomOAuthSecret = crypto.randomBytes(32).toString('hex');
+    const oauthPasswordHash = await bcrypt.hash(randomOAuthSecret, BCRYPT_SALT_ROUNDS);
 
     const db = getFirebaseDb();
     if (db) {
       try {
-        const existQ = query(collection(db, 'users'), where('email', '==', email || ''));
+        const existQ = query(collection(db, 'users'), where('email', '==', email));
         const existSnap = await getDocs(existQ);
         let user: any = null;
         if (!existSnap.empty) user = existSnap.docs[0].data();
@@ -1860,8 +2730,14 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
           }
           userId = `U${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
           user = {
-            id: userId, email, password: 'oauth_user_no_password',
-            firstname: firstName, lastname: surname, role: 'user',
+            id: userId, 
+            email, 
+            password: oauthPasswordHash,
+            authProvider: 'google',
+            emailVerified: true, // Google verifies emails
+            firstname: firstName, 
+            lastname: surname, 
+            role: 'user',
             country: geo.country,
             region: geo.region,
             city: geo.city,
@@ -1873,44 +2749,33 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
           const welcomeSubject = "Welcome to Tizzitech!";
           const welcomeContent = `
             <h2 style="font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: #ffffff; margin: 0 0 16px 0; text-align: center;">Welcome, ${firstName}!</h2>
-            <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 16px;">We are absolutely thrilled to welcome you to <strong>Tizzitech Online Store</strong> — your trusted destination for premium tech accessories, premium gadgets, laptops, phones, chargers, power banks, and much more.</p>
-            <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 24px;">Our mission is to empower your digital life with quality accessories you can rely on, backed by outstanding customer service.</p>
-            <div style="background-color: #1f2937; border-radius: 8px; padding: 20px; border: 1px solid #374151; margin-bottom: 24px;">
-              <h3 style="font-size: 14px; font-weight: bold; color: #ffffff; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 1px;">Getting Started</h3>
-              <p style="font-size: 13px; color: #9ca3af; margin: 0 0 12px 0;">Your account is ready! Here is what you can do right now:</p>
-              <ul style="font-size: 13px; color: #d1d5db; margin: 0; padding-left: 20px; line-height: 1.6;">
-                <li>Browse our wide selection of laptops & mobile accessories</li>
-                <li>Build your cart with standard premium gadgets</li>
-                <li>Track all your orders and status in real-time</li>
-              </ul>
-            </div>
+            <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 16px;">We are thrilled to welcome you to <strong>Tizzitech Online Store</strong> — your trusted destination for tech gadgets and accessories.</p>
             <div style="text-align: center; margin-top: 30px; margin-bottom: 10px;">
               <a href="${getBaseUrl(req)}" style="display: inline-block; background-color: #3b82f6; color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 12px 28px; border-radius: 8px; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);">Start Shopping Now</a>
             </div>
           `;
           const welcomeHtml = getPremiumTemplateHtml(welcomeSubject, welcomeContent, getBaseUrl(req));
-          let deliveryStatus = 'pending';
-          let emailError = null;
-          try {
-            await sendEmail(email, welcomeSubject, welcomeHtml);
-            deliveryStatus = 'delivered';
-          } catch (err: any) {
-            console.error("Async email failed:", err);
-            emailError = err.message;
-            deliveryStatus = 'failed';
-          }
-          try {
-            const { updateDoc } = await import('firebase/firestore');
-            await updateDoc(doc(db, 'users', user.id), { deliveryStatus, emailError: emailError || null });
-          } catch (e) {}
+          sendEmail(email, welcomeSubject, welcomeHtml).catch(err => console.error("Async email failed:", err));
         }
+
+        await logSecurityEvent(req, 'AUTH_GOOGLE_SUCCESS', 'INFO', `User authenticated with Google OAuth`, email);
 
         const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
         return res.json({ 
           success: true, 
           token, 
           user: { 
-            id: user.id, email: user.email, firstName: user.firstname, surname: user.lastname, address: user.address, phone: user.phone, role: user.role, city: user.city, stateLocation: user.stateLocation, lga: user.lga 
+            id: user.id, 
+            email: user.email, 
+            firstName: user.firstname, 
+            surname: user.lastname, 
+            address: user.address || '', 
+            phone: user.phone || '', 
+            role: user.role, 
+            city: user.city || '', 
+            stateLocation: user.stateLocation || '', 
+            lga: user.lga || '',
+            emailVerified: true
           } 
         });
       } catch (err: any) {
@@ -1924,66 +2789,80 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
       fallbackUser = {
         id: `U${Math.random().toString(36).substring(2, 10).toUpperCase()}`,
         email,
-        password: 'oauth_user_no_password',
+        password: oauthPasswordHash,
+        authProvider: 'google',
+        emailVerified: true,
         firstname: firstName,
         lastname: surname,
         role: 'user'
       };
       fallbackUsers.push(fallbackUser);
       
-      // Send welcome email for new Google Auth users
       const welcomeSubject = "Welcome to Tizzitech!";
       const welcomeContent = `
-        <h2 style="font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: #ffffff; margin: 0 0 16px 0; text-align: center;">Welcome, ${firstName}!</h2>
-        <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 16px;">We are absolutely thrilled to welcome you to <strong>Tizzitech Online Store</strong> — your trusted destination for premium tech accessories, premium gadgets, laptops, phones, chargers, power banks, and much more.</p>
-        <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 24px;">Our mission is to empower your digital life with quality accessories you can rely on, backed by outstanding customer service.</p>
-        <div style="background-color: #1f2937; border-radius: 8px; padding: 20px; border: 1px solid #374151; margin-bottom: 24px;">
-          <h3 style="font-size: 14px; font-weight: bold; color: #ffffff; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 1px;">Getting Started</h3>
-          <p style="font-size: 13px; color: #9ca3af; margin: 0 0 12px 0;">Your account is ready! Here is what you can do right now:</p>
-          <ul style="font-size: 13px; color: #d1d5db; margin: 0; padding-left: 20px; line-height: 1.6;">
-            <li>Browse our wide selection of laptops & mobile accessories</li>
-            <li>Build your cart with standard premium gadgets</li>
-            <li>Track all your orders and status in real-time</li>
-          </ul>
-        </div>
-        <div style="text-align: center; margin-top: 30px; margin-bottom: 10px;">
-          <a href="${process.env.APP_URL || 'https://tizzitech.com.ng'}" style="display: inline-block; background-color: #3b82f6; color: #ffffff; font-size: 14px; font-weight: bold; text-decoration: none; padding: 12px 28px; border-radius: 8px; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);">Start Shopping Now</a>
-        </div>
+        <h2 style="font-size: 22px; font-weight: 800; color: #ffffff; margin-bottom: 16px; text-align: center;">Welcome, ${firstName}!</h2>
+        <p style="font-size: 15px; color: #d1d5db; line-height: 1.6; margin-bottom: 24px;">We are thrilled to welcome you to Tizzitech Online Store.</p>
       `;
       const welcomeHtml = getPremiumTemplateHtml(welcomeSubject, welcomeContent, process.env.APP_URL || 'https://tizzitech.com.ng');
-      await sendEmail(email, welcomeSubject, welcomeHtml).catch(err => console.error("Async email failed:", err));
+      sendEmail(email, welcomeSubject, welcomeHtml).catch(err => console.error("Async email failed:", err));
     }
+
+    await logSecurityEvent(req, 'AUTH_GOOGLE_SUCCESS', 'INFO', `User authenticated with Google OAuth (fallback)`, email);
 
     const token = jwt.sign({ userId: fallbackUser.id, email: fallbackUser.email, role: fallbackUser.role }, JWT_SECRET, { expiresIn: '7d' });
     return res.json({ 
       success: true, 
       token, 
       user: { 
-        id: fallbackUser.id, email: fallbackUser.email, firstName: fallbackUser.firstname, surname: fallbackUser.lastname, address: fallbackUser.address, phone: fallbackUser.phone, role: fallbackUser.role, city: (fallbackUser as any).city, stateLocation: (fallbackUser as any).stateLocation, lga: (fallbackUser as any).lga 
+        id: fallbackUser.id, 
+        email: fallbackUser.email, 
+        firstName: fallbackUser.firstname, 
+        surname: fallbackUser.lastname, 
+        address: fallbackUser.address || '', 
+        phone: fallbackUser.phone || '', 
+        role: fallbackUser.role, 
+        city: (fallbackUser as any).city || '', 
+        stateLocation: (fallbackUser as any).stateLocation || '', 
+        lga: (fallbackUser as any).lga || '',
+        emailVerified: true
       } 
     });
   } catch (error) {
     console.error('Google Auth Error:', error);
+    await logSecurityEvent(req, 'AUTH_GOOGLE_FAILED', 'WARN', `Google token verification failed`);
     return res.status(401).json({ success: false, message: 'Google authentication failed' });
   }
 });
 
-// 12. USER LOGIN
-app.post('/api/auth/login', async (req, res) => {
+// 12. USER LOGIN (Protected by dedicated loginLimiter and honeypotBotDetector)
+app.post('/api/auth/login', loginLimiter, honeypotBotDetector, async (req, res) => {
   const { email, password, clientGeo } = req.body;
   if (!email || !password) return res.status(400).json({ success: false, message: 'Email and password required' });
+
+  const cleanEmail = email.trim().toLowerCase();
 
   const db = getFirebaseDb();
   if (db) {
     try {
-      const existQ = query(collection(db, 'users'), where('email', '==', email || ''));
+      const existQ = query(collection(db, 'users'), where('email', '==', cleanEmail));
       const existSnap = await getDocs(existQ);
       let user: any = null;
       if (!existSnap.empty) user = existSnap.docs[0].data();
-      if (!user) throw new Error('User not found in Firestore');
+      if (!user) {
+        await logSecurityEvent(req, 'AUTH_LOGIN_FAILED', 'WARN', `Login failed: user does not exist (${cleanEmail})`, cleanEmail);
+        return res.status(401).json({ success: false, message: 'Invalid email or password.' });
+      }
+
+      if (!user.password) {
+        await logSecurityEvent(req, 'AUTH_LOGIN_FAILED', 'WARN', `Login failed: social account without password (${cleanEmail})`, cleanEmail);
+        return res.status(401).json({ success: false, message: 'Please sign in with Google or reset your password.' });
+      }
 
       const isValid = await bcrypt.compare(password, user.password);
-      if (!isValid) return res.status(401).json({ success: false, message: 'Invalid credentials' });
+      if (!isValid) {
+        await logSecurityEvent(req, 'AUTH_LOGIN_FAILED', 'WARN', `Login failed: invalid password supplied for ${cleanEmail}`, cleanEmail);
+        return res.status(401).json({ success: false, message: 'Invalid email or password.' });
+      }
 
       if (!user.country || !user.region || user.country === 'Unknown' || user.country === 'UNKNOWN') {
         try {
@@ -2002,6 +2881,8 @@ app.post('/api/auth/login', async (req, res) => {
         } catch (e) {}
       }
 
+      await logSecurityEvent(req, 'AUTH_LOGIN_SUCCESS', 'INFO', `User logged in successfully`, cleanEmail);
+
       const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
       return res.json({ 
         success: true, 
@@ -2011,12 +2892,13 @@ app.post('/api/auth/login', async (req, res) => {
           email: user.email, 
           firstName: user.firstname, 
           surname: user.lastname, 
-          address: user.address,
-          city: user.city,
-          stateLocation: user.stateLocation,
-          lga: user.lga, 
-          phone: user.phone, 
-          role: user.role 
+          address: user.address || '',
+          city: user.city || '',
+          stateLocation: user.stateLocation || '',
+          lga: user.lga || '', 
+          phone: user.phone || '', 
+          role: user.role || 'user',
+          emailVerified: !!user.emailVerified
         } 
       });
     } catch (err: any) {
@@ -2025,11 +2907,24 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   // Fallback to in-memory login
-  const fallbackUser = fallbackUsers.find(u => u.email === email);
-  if (!fallbackUser) return res.status(401).json({ success: false, message: 'Invalid credentials' });
+  const fallbackUser = fallbackUsers.find(u => u.email === cleanEmail);
+  if (!fallbackUser) {
+    await logSecurityEvent(req, 'AUTH_LOGIN_FAILED', 'WARN', `Login failed: fallback user not found (${cleanEmail})`, cleanEmail);
+    return res.status(401).json({ success: false, message: 'Invalid email or password.' });
+  }
+
+  if (!fallbackUser.password) {
+    await logSecurityEvent(req, 'AUTH_LOGIN_FAILED', 'WARN', `Login failed: fallback account without password (${cleanEmail})`, cleanEmail);
+    return res.status(401).json({ success: false, message: 'Please sign in with Google or reset your password.' });
+  }
 
   const isValid = await bcrypt.compare(password, fallbackUser.password);
-  if (!isValid) return res.status(401).json({ success: false, message: 'Invalid credentials' });
+  if (!isValid) {
+    await logSecurityEvent(req, 'AUTH_LOGIN_FAILED', 'WARN', `Login failed: invalid password supplied in fallback for ${cleanEmail}`, cleanEmail);
+    return res.status(401).json({ success: false, message: 'Invalid email or password.' });
+  }
+
+  await logSecurityEvent(req, 'AUTH_LOGIN_SUCCESS', 'INFO', `User logged in successfully (fallback)`, cleanEmail);
 
   const token = jwt.sign({ userId: fallbackUser.id, email: fallbackUser.email, role: fallbackUser.role }, JWT_SECRET, { expiresIn: '7d' });
   return res.json({ 
@@ -2040,9 +2935,10 @@ app.post('/api/auth/login', async (req, res) => {
       email: fallbackUser.email, 
       firstName: fallbackUser.firstname, 
       surname: fallbackUser.lastname, 
-      address: fallbackUser.address, 
-      phone: fallbackUser.phone, 
-      role: fallbackUser.role 
+      address: fallbackUser.address || '', 
+      phone: fallbackUser.phone || '', 
+      role: fallbackUser.role || 'user',
+      emailVerified: !!(fallbackUser as any).emailVerified
     } 
   });
 });
@@ -2059,26 +2955,48 @@ app.put('/api/auth/profile', async (req, res) => {
   }
 
   const { firstName, surname, address, phone, codename, city, stateLocation, lga } = req.body;
+  const callerUserId = decoded.userId || decoded.backendId || decoded.id;
+  const callerEmail = decoded.email ? decoded.email.toLowerCase() : null;
   
   const db = getFirebaseDb();
   if (db) {
     try {
-      const existQ = query(collection(db, 'users'), where('id', '==', decoded.userId || decoded.backendId || ''));
-      const existSnap = await getDocs(existQ);
-      if (!existSnap.empty) {
-        const userRef = existSnap.docs[0].ref;
-        await updateDoc(userRef, {
-          ...(firstName && { firstname: firstName }),
-          ...(surname && { lastname: surname }),
-          ...(address && { address }),
-          ...(phone && { phone }),
-          ...(codename && { codename }),
-          ...(city && { city }),
-          ...(stateLocation && { stateLocation }),
-          ...(lga && { lga }),
-        });
-        return res.json({ success: true, message: 'Profile updated successfully' });
-      } else if (decoded.email) {
+      const adb = getAdminDb();
+      if (callerUserId) {
+        if (adb) {
+          try {
+            await adb.collection('users').doc(callerUserId).update({
+              ...(firstName && { firstname: firstName }),
+              ...(surname && { lastname: surname }),
+              ...(address && { address }),
+              ...(phone && { phone }),
+              ...(codename && { codename }),
+              ...(city && { city }),
+              ...(stateLocation && { stateLocation }),
+              ...(lga && { lga }),
+            });
+          } catch(e) {}
+        }
+
+        const existQ = query(collection(db, 'users'), where('id', '==', callerUserId));
+        const existSnap = await getDocs(existQ);
+        if (!existSnap.empty) {
+          const userRef = existSnap.docs[0].ref;
+          await updateDoc(userRef, {
+            ...(firstName && { firstname: firstName }),
+            ...(surname && { lastname: surname }),
+            ...(address && { address }),
+            ...(phone && { phone }),
+            ...(codename && { codename }),
+            ...(city && { city }),
+            ...(stateLocation && { stateLocation }),
+            ...(lga && { lga }),
+          });
+          return res.json({ success: true, message: 'Profile updated successfully' });
+        }
+      }
+      
+      if (callerEmail) {
         const existEmailQ = query(collection(db, 'users'), where('email', '==', decoded.email || ''));
         const existEmailSnap = await getDocs(existEmailQ);
         if (!existEmailSnap.empty) {
@@ -2103,8 +3021,8 @@ app.put('/api/auth/profile', async (req, res) => {
     }
   }
 
-  // Fallback memory
-  const fallbackUserIndex = fallbackUsers.findIndex(u => u.id === decoded.userId || u.id === decoded.backendId || u.email === decoded.email);
+  // Fallback memory with ownership check
+  const fallbackUserIndex = fallbackUsers.findIndex(u => (callerUserId && u.id === callerUserId) || (callerEmail && u.email.toLowerCase() === callerEmail));
   if (fallbackUserIndex !== -1) {
     if (firstName) fallbackUsers[fallbackUserIndex].firstname = firstName;
     if (surname) fallbackUsers[fallbackUserIndex].lastname = surname;
@@ -2124,30 +3042,40 @@ app.get('/api/users/:userId/orders', async (req, res) => {
   const { userId } = req.params;
   const authHeader = req.headers.authorization || '';
   const token = authHeader.replace('Bearer ', '');
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  if (!token) return res.status(401).json({ error: 'Unauthorized: authentication token required' });
 
   let decoded: any;
   try {
     decoded = jwt.verify(token, JWT_SECRET);
-    // Secure check: only allow the user themselves or an admin to access these orders
-    if (decoded.userId !== userId && decoded.role !== 'admin') {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
   } catch (err) {
-    return res.status(401).json({ error: 'Invalid token' });
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+
+  // Strict ownership check: prevent IDOR by ensuring caller owns the user profile or is an admin
+  const callerUserId = decoded.userId || decoded.backendId || decoded.id;
+  const callerEmail = decoded.email ? decoded.email.toLowerCase() : null;
+  const isOwner = callerUserId === userId || (callerEmail && callerEmail === userId.toLowerCase());
+
+  if (decoded.role !== 'admin' && !isOwner) {
+    return res.status(403).json({ error: 'Forbidden: You cannot access orders belonging to another user' });
   }
 
   const db = getFirebaseDb();
   if (db) {
     try {
       let ordersRows: any[] = [];
-      try {
-        const q1 = query(collection(db, 'orders'), where('userId', '==', userId));
-        const snap1 = await getDocs(q1);
-        snap1.docs.forEach((d: any) => ordersRows.push(d.data()));
-      } catch(e) {}
+      const queryUserId = decoded.role === 'admin' ? userId : callerUserId;
       
-      if (decoded.email) {
+      if (queryUserId) {
+        try {
+          const q1 = query(collection(db, 'orders'), where('userId', '==', queryUserId));
+          const snap1 = await getDocs(q1);
+          snap1.docs.forEach((d: any) => ordersRows.push(d.data()));
+        } catch(e) {}
+      }
+      
+      const queryEmail = decoded.role === 'admin' ? null : callerEmail;
+      if (queryEmail) {
         try {
           const q2 = query(collection(db, 'orders'), where('email', '==', decoded.email));
           const snap2 = await getDocs(q2);
@@ -2202,9 +3130,12 @@ app.get('/api/users/:userId/orders', async (req, res) => {
     }
   }
   
-  const userFallbackOrders = decoded?.email 
-    ? fallbackOrders.filter(o => o.email === decoded.email)
-    : fallbackOrders.filter(o => o.user_id === userId);
+  const userFallbackOrders = decoded?.role === 'admin'
+    ? fallbackOrders.filter(o => o.user_id === userId || (o as any).userId === userId)
+    : fallbackOrders.filter(o => 
+        (callerUserId && (o.user_id === callerUserId || (o as any).userId === callerUserId)) ||
+        (callerEmail && o.email.toLowerCase() === callerEmail)
+      );
   return res.json({ success: true, orders: userFallbackOrders });
 });
 
@@ -2239,8 +3170,8 @@ app.post('/api/orders/statuses', async (req, res) => {
   return res.json({ success: true, statuses });
 });
 
-// 14. NEWSLETTER SUBSCRIPTION
-app.post('/api/newsletter/subscribe', apiLimiter, async (req, res) => {
+// 14. NEWSLETTER SUBSCRIPTION (Protected against spam bots & email harvesting)
+app.post('/api/newsletter/subscribe', newsletterLimiter, honeypotBotDetector, async (req, res) => {
   const { email } = req.body;
   if (!email) {
     return res.status(400).json({ success: false, message: 'Email is required' });
@@ -2366,6 +3297,129 @@ app.post('/api/newsletter/subscribe', apiLimiter, async (req, res) => {
   return res.json({ success: true, message: 'Successfully subscribed (Fallback)' });
 });
 
+// 14b. PRE-LAUNCH VIP WAITLIST SUBSCRIPTION & EMAIL CONFIRMATION (Bot Protected)
+app.post('/api/waitlist/subscribe', newsletterLimiter, honeypotBotDetector, async (req, res) => {
+  const { email, name, productInterest, phone, notifyMethod, vipPassId } = req.body;
+  if (!email || !email.includes('@')) {
+    return res.status(400).json({ success: false, message: 'Valid email address is required' });
+  }
+
+  const passId = vipPassId || `TZ-VIP-${Math.floor(100000 + Math.random() * 900000)}`;
+  const subscriberName = name?.trim() || 'Tech Enthusiast';
+  const selectedDevice = productInterest || 'All 2026 Flagship Drops';
+  const cleanEmail = email.trim().toLowerCase();
+
+  const subscriberData = {
+    email: cleanEmail,
+    name: subscriberName,
+    productInterest: selectedDevice,
+    phone: phone?.trim() || '',
+    notifyMethod: notifyMethod || 'email',
+    vipPassId: passId,
+    source: 'product_launch_waitlist',
+    subscribedAt: new Date().toISOString(),
+    status: 'active'
+  };
+
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      const newSubRef = doc(db, 'newsletter_subscribers', cleanEmail);
+      await setDoc(newSubRef, subscriberData, { merge: true });
+    } catch (err: any) {
+      console.error('Firestore waitlist save error:', err.message);
+    }
+  }
+
+  // Compose Rich VIP Pre-Launch Email
+  const confirmSubject = `⚡ VIP Pre-Launch Priority Confirmed! Pass #${passId}`;
+  const confirmContent = `
+    <div style="text-align: center; margin-bottom: 24px;">
+      <span style="background-color: rgba(6, 182, 212, 0.15); border: 1px solid rgba(6, 182, 212, 0.4); color: #22d3ee; padding: 6px 16px; border-radius: 9999px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; display: inline-block; margin-bottom: 12px;">
+        OFFICIAL PRE-LAUNCH VIP PASS
+      </span>
+      <h2 style="font-size: 24px; font-weight: 900; color: #ffffff; margin: 0 0 8px 0; font-family: Georgia, serif;">
+        Welcome to the 2026 Flagship Drop Waitlist!
+      </h2>
+      <p style="font-size: 14px; color: #9ca3af; margin: 0;">
+        Hello <strong style="color: #ffffff;">${subscriberName}</strong>, your spot on the priority launch radar is locked in.
+      </p>
+    </div>
+
+    <!-- VIP PASS BADGE CARD -->
+    <div style="background: linear-gradient(180deg, #111827 0%, #030712 100%); border: 1px solid #06b6d4; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 10px 25px -5px rgba(6, 182, 212, 0.2);">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+        <tr>
+          <td style="padding-bottom: 12px; border-bottom: 1px solid #1f2937;">
+            <span style="font-size: 11px; color: #6b7280; text-transform: uppercase; font-family: monospace;">VIP Pass ID:</span><br/>
+            <strong style="font-size: 20px; color: #22d3ee; font-family: monospace; letter-spacing: 0.05em;">${passId}</strong>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding: 12px 0; border-bottom: 1px solid #1f2937;">
+            <span style="font-size: 11px; color: #6b7280; text-transform: uppercase; font-family: monospace;">Selected Device Preference:</span><br/>
+            <strong style="font-size: 14px; color: #ffffff;">${selectedDevice}</strong>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding-top: 12px;">
+            <span style="font-size: 11px; color: #6b7280; text-transform: uppercase; font-family: monospace;">Your Locked-In VIP Perks:</span>
+            <ul style="margin: 8px 0 0 0; padding-left: 20px; color: #38bdf8; font-size: 13px; line-height: 1.8;">
+              <li><strong>🏷️ 7% Instant Discount:</strong> Automatically applied when using your Pass ID or email at checkout.</li>
+              <li><strong>✨ Free First Purchase Shipping:</strong> 100% covered by Tizzitech.</li>
+              <li><strong>🚀 1st Week Free Delivery:</strong> Free express doorstep delivery during launch week.</li>
+              <li><strong>⚡ Early Access Alert:</strong> Direct SMS/Email alert minutes before public inventory goes live.</li>
+            </ul>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <div style="background-color: #111827; border-left: 4px solid #a855f7; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+      <h4 style="font-size: 13px; font-weight: 800; color: #e9d5ff; margin: 0 0 6px 0; text-transform: uppercase;">
+        How to Claim at Launch:
+      </h4>
+      <p style="font-size: 13px; color: #d1d5db; line-height: 1.6; margin: 0;">
+        When the 2026 Pre-Launch drop begins, visit <strong>Tizzitech</strong>, choose your flagship device, and type your VIP Pass ID (<code style="background: #1f2937; color: #22d3ee; padding: 2px 6px; border-radius: 4px; font-family: monospace;">${passId}</code>) or registered email (<code style="background: #1f2937; color: #ffffff; padding: 2px 6px; border-radius: 4px;">${cleanEmail}</code>) into the coupon field at checkout!
+      </p>
+    </div>
+
+    <div style="text-align: center; margin-bottom: 16px;">
+      <a href="${getBaseUrl(req)}" style="display: inline-block; background: linear-gradient(90deg, #06b6d4 0%, #a855f7 100%); color: #000000; font-size: 14px; font-weight: 900; text-decoration: none; padding: 14px 32px; border-radius: 12px; text-transform: uppercase; letter-spacing: 0.05em;">
+        Visit Tizzitech Store
+      </a>
+    </div>
+  `;
+
+  const confirmHtml = getPremiumTemplateHtml(confirmSubject, confirmContent, getBaseUrl(req));
+
+  let emailSent = false;
+  let emailError = null;
+  try {
+    await sendEmail(cleanEmail, confirmSubject, confirmHtml);
+    emailSent = true;
+  } catch (err: any) {
+    console.error('Waitlist email error:', err.message);
+    emailError = err.message;
+  }
+
+  if (db) {
+    try {
+      const newSubRef = doc(db, 'newsletter_subscribers', cleanEmail);
+      await setDoc(newSubRef, { deliveryStatus: emailSent ? 'delivered' : 'failed', emailError: emailError || null }, { merge: true });
+    } catch (e) {}
+  }
+
+  return res.json({
+    success: true,
+    message: emailSent
+      ? `VIP Waitlist confirmed! A confirmation email has been sent to ${cleanEmail}.`
+      : `VIP Priority reserved! Pass ID: ${passId}`,
+    vipPassId: passId,
+    emailSent
+  });
+});
+
 
 // ADMIN: GET USERS
 app.get('/api/admin/users', verifyAdminToken, async (req, res) => {
@@ -2443,7 +3497,7 @@ app.get('/api/admin/newsletter/subscribers', verifyAdminToken, async (req, res) 
 });
 
 app.post('/api/admin/newsletter/send', verifyAdminToken, async (req, res) => {
-  const { subject, content } = req.body;
+  const { subject, content, targetAudience = 'all' } = req.body;
   if (!subject || !content) {
     return res.status(400).json({ success: false, message: 'Subject and content are required' });
   }
@@ -2457,8 +3511,19 @@ app.post('/api/admin/newsletter/send', verifyAdminToken, async (req, res) => {
       const activeSnap = await adb.collection('newsletter_subscribers').where('status', '==', 'active').get();
       if (!activeSnap.empty) {
         activeSnap.forEach((doc: any) => {
-          const email = doc.data().email;
-          if (email) emails.push(email);
+          const data = doc.data();
+          const email = data.email;
+          const isWaitlist = data.source === 'product_launch_waitlist' || Boolean(data.vipPassId);
+          
+          if (email) {
+            if (targetAudience === 'waitlist' && isWaitlist) {
+              emails.push(email);
+            } else if (targetAudience === 'newsletter' && !isWaitlist) {
+              emails.push(email);
+            } else if (targetAudience === 'all') {
+              emails.push(email);
+            }
+          }
         });
         fetchedViaAdmin = true;
       }
@@ -2482,7 +3547,21 @@ app.post('/api/admin/newsletter/send', verifyAdminToken, async (req, res) => {
         return res.status(400).json({ success: false, message: 'No active subscribers found' });
       }
 
-      emails = activeSnap.docs.map(d => d.data().email);
+      activeSnap.docs.forEach(d => {
+        const data = d.data();
+        const email = data.email;
+        const isWaitlist = data.source === 'product_launch_waitlist' || Boolean(data.vipPassId);
+
+        if (email) {
+          if (targetAudience === 'waitlist' && isWaitlist) {
+            emails.push(email);
+          } else if (targetAudience === 'newsletter' && !isWaitlist) {
+            emails.push(email);
+          } else if (targetAudience === 'all') {
+            emails.push(email);
+          }
+        }
+      });
     } catch (err: any) {
       console.error('Error fetching active subscribers:', err.message);
       return res.status(500).json({ success: false, message: err.message });
@@ -2567,6 +3646,269 @@ app.post('/api/admin/newsletter/send', verifyAdminToken, async (req, res) => {
   }
 });
 
+// 14c. AUTOMATED & MANUAL INACTIVE CUSTOMERS RE-ENGAGEMENT CAMPAIGN (30+ DAYS)
+async function sendInactiveUserReengagementEmails(daysThreshold = 30, reqForLog?: any) {
+  const now = new Date();
+  const thresholdMs = daysThreshold * 24 * 60 * 60 * 1000;
+  const cutoffTime = new Date(now.getTime() - thresholdMs);
+
+  let usersToReengage: any[] = [];
+  const adb = getAdminDb();
+
+  if (adb) {
+    try {
+      const snap = await adb.collection('users').get();
+      snap.forEach((d: any) => {
+        const u = d.data();
+        if (u.email && u.role !== 'admin') {
+          const rawLastActive = u.lastActiveAt || u.createdAt || u.created_at;
+          let lastActiveDate: Date | null = null;
+          if (rawLastActive) {
+            lastActiveDate = new Date(rawLastActive);
+          }
+
+          let lastReengageDate: Date | null = null;
+          if (u.lastReengagementSentAt) {
+            lastReengageDate = new Date(u.lastReengagementSentAt);
+          }
+
+          const isInactive = !lastActiveDate || lastActiveDate < cutoffTime;
+          const notRecentlyReengaged = !lastReengageDate || (now.getTime() - lastReengageDate.getTime() > thresholdMs);
+
+          if (isInactive && notRecentlyReengaged) {
+            usersToReengage.push({ docId: d.id, ...u });
+          }
+        }
+      });
+    } catch (err: any) {
+      console.error('Error fetching users via Admin DB:', err.message);
+    }
+  }
+
+  if (usersToReengage.length === 0) {
+    const db = getFirebaseDb();
+    if (db) {
+      try {
+        const snap = await getDocs(collection(db, 'users'));
+        snap.docs.forEach((d: any) => {
+          const u = d.data();
+          if (u.email && u.role !== 'admin') {
+            const rawLastActive = u.lastActiveAt || u.createdAt || u.created_at;
+            let lastActiveDate: Date | null = null;
+            if (rawLastActive) lastActiveDate = new Date(rawLastActive);
+
+            let lastReengageDate: Date | null = null;
+            if (u.lastReengagementSentAt) lastReengageDate = new Date(u.lastReengagementSentAt);
+
+            const isInactive = !lastActiveDate || lastActiveDate < cutoffTime;
+            const notRecentlyReengaged = !lastReengageDate || (now.getTime() - lastReengageDate.getTime() > thresholdMs);
+
+            if (isInactive && notRecentlyReengaged) {
+              usersToReengage.push({ docId: d.id, ...u });
+            }
+          }
+        });
+      } catch (e: any) {
+        console.error('Error fetching users via Client DB:', e.message);
+      }
+    }
+  }
+
+  if (usersToReengage.length === 0) {
+    return { success: true, count: 0, sentCount: 0, totalInactive: 0, message: 'No inactive customers found matching criteria (30+ days inactive).' };
+  }
+
+  // Fetch top 3 featured products to feature in re-engagement email
+  let featuredProds: any[] = [];
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      const prodSnap = await getDocs(collection(db, 'products'));
+      if (!prodSnap.empty) {
+        featuredProds = prodSnap.docs.map((d: any) => d.data()).slice(0, 3);
+      }
+    } catch (e) {}
+  }
+  if (featuredProds.length === 0 && Array.isArray(fallbackProducts)) {
+    featuredProds = fallbackProducts.slice(0, 3);
+  }
+
+  const baseUrl = process.env.APP_URL || 'https://tizzitech.com.ng';
+
+  // Build product HTML grid cards
+  let productCardsHtml = '';
+  featuredProds.forEach((p: any) => {
+    const pName = p.name || 'Flagship Smartphone';
+    const pCategory = p.category || 'Tech Flagship';
+    const pPrice = typeof p.price === 'number' ? `₦${p.price.toLocaleString()}` : (p.price || 'Special Price');
+    const pImg = p.imageUrl || p.image || 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600&auto=format&fit=crop&q=80';
+    const pLink = `${baseUrl}/?product=${p.id || ''}`;
+
+    productCardsHtml += `
+      <div style="background-color: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 16px; margin-bottom: 16px; text-align: left;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          <tr>
+            <td width="90" style="vertical-align: top; padding-right: 16px;">
+              <img src="${pImg}" alt="${pName}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 8px; border: 1px solid #374151;" />
+            </td>
+            <td style="vertical-align: top;">
+              <span style="font-size: 10px; font-weight: 800; color: #22d3ee; text-transform: uppercase; letter-spacing: 0.05em; display: inline-block; margin-bottom: 4px;">${pCategory}</span>
+              <h4 style="font-size: 15px; font-weight: 800; color: #ffffff; margin: 0 0 6px 0; line-height: 1.3;">${pName}</h4>
+              <p style="font-size: 14px; font-weight: 900; color: #38bdf8; margin: 0 0 10px 0; font-family: monospace;">${pPrice}</p>
+              <a href="${pLink}" style="display: inline-block; background-color: #06b6d4; color: #000000; font-size: 11px; font-weight: 800; text-decoration: none; padding: 6px 14px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.05em;">View Product &rarr;</a>
+            </td>
+          </tr>
+        </table>
+      </div>
+    `;
+  });
+
+  let emailsSent = 0;
+  const sentRecipients: string[] = [];
+
+  for (const u of usersToReengage) {
+    const firstName = u.firstName || u.firstname || u.name?.split(' ')[0] || 'Valued Tech Enthusiast';
+    const subject = `👋 We miss you, ${firstName}! Discover what's new at Tizzitech + Exclusive Perks`;
+
+    const bodyContent = `
+      <div style="text-align: center; margin-bottom: 24px;">
+        <span style="background-color: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.4); color: #c084fc; padding: 6px 16px; border-radius: 9999px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; display: inline-block; margin-bottom: 12px;">
+          WE MISS YOU! EXCLUSIVE BACK-IN-STORE DIGEST
+        </span>
+        <h2 style="font-size: 24px; font-weight: 900; color: #ffffff; margin: 0 0 8px 0; font-family: Georgia, serif;">
+          It's Been A While, ${firstName}!
+        </h2>
+        <p style="font-size: 14px; color: #9ca3af; margin: 0; line-height: 1.6;">
+          We noticed you haven't dropped by Tizzitech in over a month. We've added incredible new flagship smartphones, laptops, and unbeatable gadget deals you won't want to miss!
+        </p>
+      </div>
+
+      <div style="background: linear-gradient(180deg, #030712 0%, #111827 100%); border: 1px solid #374151; border-radius: 16px; padding: 20px; margin-bottom: 24px;">
+        <h3 style="font-size: 13px; font-weight: 800; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 16px 0; text-align: center;">
+          🔥 Top 3 Trending Flagship Products Handpicked For You:
+        </h3>
+        ${productCardsHtml}
+      </div>
+
+      <div style="background-color: rgba(6, 182, 212, 0.08); border-left: 4px solid #06b6d4; border-radius: 8px; padding: 16px; margin-bottom: 24px; text-align: left;">
+        <h4 style="font-size: 13px; font-weight: 800; color: #22d3ee; margin: 0 0 6px 0; text-transform: uppercase;">
+          🎁 Welcome Back VIP Perk:
+        </h4>
+        <p style="font-size: 13px; color: #d1d5db; line-height: 1.6; margin: 0;">
+          Enjoy express delivery and guaranteed authentic warranty on all orders. Plus, use coupon code <strong style="color: #ffffff; background: #1f2937; padding: 2px 8px; border-radius: 4px; font-family: monospace;">TIZZWELCOME</strong> for a bonus discount at checkout!
+        </p>
+      </div>
+
+      <div style="text-align: center; margin-bottom: 16px;">
+        <a href="${baseUrl}" style="display: inline-block; background: linear-gradient(90deg, #06b6d4 0%, #a855f7 100%); color: #000000; font-size: 14px; font-weight: 900; text-decoration: none; padding: 14px 32px; border-radius: 12px; text-transform: uppercase; letter-spacing: 0.05em;">
+          Explore Complete Catalog
+        </a>
+      </div>
+    `;
+
+    const html = getPremiumTemplateHtml(subject, bodyContent, baseUrl);
+
+    try {
+      await sendEmail(u.email, subject, html);
+      emailsSent++;
+      sentRecipients.push(u.email);
+
+      const timeNowStr = new Date().toISOString();
+      if (adb && u.docId) {
+        await adb.collection('users').doc(u.docId).update({ lastReengagementSentAt: timeNowStr }).catch(() => {});
+      } else if (u.docId) {
+        const dbClient = getFirebaseDb();
+        if (dbClient) {
+          await updateDoc(doc(dbClient, 'users', u.docId), { lastReengagementSentAt: timeNowStr }).catch(() => {});
+        }
+      }
+    } catch (err: any) {
+      console.error(`Failed sending re-engagement email to ${u.email}:`, err.message);
+    }
+  }
+
+  if (reqForLog) {
+    await logServerAuditActivity(reqForLog, 'REENGAGEMENT_CAMPAIGN', `Triggered 30-day inactive user email campaign. Sent ${emailsSent} emails out of ${usersToReengage.length} inactive candidate users.`);
+  }
+
+  return {
+    success: true,
+    message: `Successfully sent re-engagement emails with top 3 products to ${emailsSent} inactive customer(s)!`,
+    sentCount: emailsSent,
+    totalInactive: usersToReengage.length,
+    recipients: sentRecipients
+  };
+}
+
+app.get('/api/admin/inactive-users-count', verifyAdminToken, async (req, res) => {
+  const daysThreshold = 30;
+  const cutoffTime = new Date(Date.now() - daysThreshold * 24 * 60 * 60 * 1000);
+  let totalUsers = 0;
+  let inactiveCount = 0;
+
+  const adb = getAdminDb();
+  if (adb) {
+    try {
+      const snap = await adb.collection('users').get();
+      totalUsers = snap.size;
+      snap.forEach((d: any) => {
+        const u = d.data();
+        if (u.role !== 'admin') {
+          const rawLastActive = u.lastActiveAt || u.createdAt || u.created_at;
+          let lastActiveDate: Date | null = null;
+          if (rawLastActive) lastActiveDate = new Date(rawLastActive);
+          if (!lastActiveDate || lastActiveDate < cutoffTime) {
+            inactiveCount++;
+          }
+        }
+      });
+      return res.json({ success: true, count: inactiveCount, totalUsers });
+    } catch (err) {}
+  }
+
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      const snap = await getDocs(collection(db, 'users'));
+      totalUsers = snap.size;
+      snap.docs.forEach((d: any) => {
+        const u = d.data();
+        if (u.role !== 'admin') {
+          const rawLastActive = u.lastActiveAt || u.createdAt || u.created_at;
+          let lastActiveDate: Date | null = null;
+          if (rawLastActive) lastActiveDate = new Date(rawLastActive);
+          if (!lastActiveDate || lastActiveDate < cutoffTime) {
+            inactiveCount++;
+          }
+        }
+      });
+      return res.json({ success: true, count: inactiveCount, totalUsers });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, message: e.message });
+    }
+  }
+
+  return res.json({ success: true, count: 0, totalUsers: 0 });
+});
+
+app.post('/api/admin/reengage-inactive', verifyAdminToken, async (req, res) => {
+  try {
+    const daysThreshold = parseInt(req.body?.daysInactive) || 30;
+    const result = await sendInactiveUserReengagementEmails(daysThreshold, req);
+    return res.json(result);
+  } catch (err: any) {
+    console.error('Error triggering re-engagement campaign:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Run automated re-engagement check once every 24 hours
+setInterval(() => {
+  sendInactiveUserReengagementEmails(30).catch(err => {
+    console.error("Automated daily re-engagement error:", err.message);
+  });
+}, 24 * 60 * 60 * 1000);
+
 
 // ========================================================
 // 16. ADMIN OTP ENDPOINTS
@@ -2589,7 +3931,10 @@ app.post('/api/admin/send-otp', async (req, res) => {
       adminSnap = await getDoc(doc(fbDb, 'admins', dId));
     }
 
-    if (!adminSnap.exists()) return res.status(403).json({ success: false, message: 'Unauthorized email' });
+    if (!adminSnap.exists()) {
+      await logSecurityEvent(req, 'ADMIN_UNAUTHORIZED_ACCESS', 'HIGH', `Unauthorized email attempted admin OTP: ${email}`, email);
+      return res.status(403).json({ success: false, message: 'Unauthorized email' });
+    }
   } catch (err: any) {
     console.error('send-otp database check failed:', err.message);
     return res.status(500).json({ success: false, message: 'DB Error: ' + err.message });
@@ -2617,6 +3962,7 @@ app.post('/api/admin/send-otp', async (req, res) => {
 
   try {
     await sendEmail(email, subject, html);
+    await logSecurityEvent(req, 'ADMIN_OTP_REQUESTED', 'INFO', `Admin OTP generated and sent to ${email}`, email);
     if (!process.env.SMTP_HOST || !process.env.SMTP_USER) {
        res.json({ success: true, message: 'OTP simulated (SMTP not configured)', devOtp: otp });
     } else {
@@ -2639,7 +3985,10 @@ app.post('/api/admin/verify-otp', async (req, res) => {
       await setDoc(doc(fbDb, 'admins', dId), { email, addedAt: new Date().toISOString() });
       adminSnap = await getDoc(doc(fbDb, 'admins', dId));
     }
-    if (!adminSnap.exists()) return res.status(403).json({ success: false, message: 'Unauthorized' });
+    if (!adminSnap.exists()) {
+      await logSecurityEvent(req, 'ADMIN_UNAUTHORIZED_ACCESS', 'HIGH', `Unauthorized email attempted OTP verify: ${email}`, email);
+      return res.status(403).json({ success: false, message: 'Unauthorized' });
+    }
   } catch (err) {
     return res.status(500).json({ success: false });
   }
@@ -2652,6 +4001,7 @@ app.post('/api/admin/verify-otp', async (req, res) => {
     const record = snap.data();
     if (Date.now() > record.expires) {
       await deleteDoc(doc(fbDb, 'admin_otps', docId));
+      await logSecurityEvent(req, 'ADMIN_OTP_EXPIRED', 'WARN', `Expired OTP used by ${email}`, email);
       return res.status(400).json({ success: false, message: 'Expired' });
     }
 
@@ -2665,10 +4015,12 @@ app.post('/api/admin/verify-otp', async (req, res) => {
       const sessionDocId = getDocId(email + "_session");
       await setDoc(doc(fbDb, 'admin_sessions', sessionDocId), { ip, userAgent });
       await logServerAuditActivity(req, 'LOGIN_SUCCESS', `Administrator logged in successfully`, email);
+      await logSecurityEvent(req, 'ADMIN_LOGIN_SUCCESS', 'INFO', `Administrator authenticated successfully via OTP`, email);
       
       const token = jwt.sign({ userId: dId, email, role: 'admin' }, JWT_SECRET, { expiresIn: '12h' });
       return res.json({ success: true, token });
     } else {
+      await logSecurityEvent(req, 'ADMIN_LOGIN_FAILED', 'HIGH', `Invalid admin OTP code attempt for ${email}`, email);
       return res.status(400).json({ success: false, message: 'Invalid OTP' });
     }
   } catch (e) {
@@ -2719,10 +4071,168 @@ app.post('/api/admin/logout', async (req, res) => {
       try {
         await deleteDoc(doc(fbDb, 'admin_sessions', sessionDocId));
         await logServerAuditActivity(req, 'LOGOUT', `Administrator logged out successfully`, email);
+        await logSecurityEvent(req, 'ADMIN_LOGOUT', 'INFO', `Administrator logged out session`, email);
       } catch(e) {}
     }
   }
   res.json({ success: true });
+});
+
+// Admin Security Metrics & Status Endpoint
+app.get('/api/admin/security/metrics', verifyAdminToken, async (req, res) => {
+  try {
+    const uptimeSeconds = process.uptime();
+    return res.json({
+      success: true,
+      metrics: {
+        threatStats,
+        uptimeSeconds: Math.floor(uptimeSeconds),
+        nodeEnv: process.env.NODE_ENV || 'development',
+        securityHeadersActive: true,
+        httpsEnforced: process.env.NODE_ENV === 'production',
+        rateLimitersActive: true,
+        databaseDirectAccessBlocked: true,
+        zeroTrustRulesDeployed: true
+      }
+    });
+  } catch (e: any) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// CONTACT FORM SUBMISSION (Rate limited & Bot protected)
+app.post('/api/contact', contactLimiter, honeypotBotDetector, async (req, res) => {
+  const { name, email, message, subject } = req.body;
+  if (!name || !email || !message) {
+    return res.status(400).json({ success: false, message: 'Name, email, and message are required.' });
+  }
+
+  // Length clamping to prevent memory buffer abuse
+  const cleanName = String(name).trim().substring(0, 100);
+  const cleanEmail = String(email).trim().toLowerCase().substring(0, 120);
+  const cleanSubject = String(subject || 'Customer Inquiry').trim().substring(0, 150);
+  const cleanMessage = String(message).trim().substring(0, 2000);
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(cleanEmail)) {
+    return res.status(400).json({ success: false, message: 'Please provide a valid email address.' });
+  }
+
+  const fbDb = getFirebaseDb();
+  const inquiryId = `INQ-${Date.now()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+  if (fbDb) {
+    try {
+      await setDoc(doc(fbDb, 'contact_messages', inquiryId), {
+        id: inquiryId,
+        name: cleanName,
+        email: cleanEmail,
+        subject: cleanSubject,
+        message: cleanMessage,
+        createdAt: new Date().toISOString(),
+        ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown'
+      });
+    } catch (e: any) {
+      console.warn('Could not store contact message in Firestore:', e.message);
+    }
+  }
+
+  // Send notification email to store admin
+  const notifSubject = `📬 New Contact Inquiry: ${cleanSubject}`;
+  const notifContent = `
+    <h2 style="font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 16px;">New Customer Message</h2>
+    <p style="font-size: 14px; color: #d1d5db; line-height: 1.6;"><strong>From:</strong> ${cleanName} (${cleanEmail})</p>
+    <p style="font-size: 14px; color: #d1d5db; line-height: 1.6;"><strong>Subject:</strong> ${cleanSubject}</p>
+    <div style="background-color: #1f2937; border-radius: 8px; padding: 16px; margin: 16px 0; border: 1px solid #374151; color: #ffffff; font-size: 14px; line-height: 1.6;">
+      ${cleanMessage.replace(/\n/g, '<br/>')}
+    </div>
+  `;
+  const notifHtml = getPremiumTemplateHtml(notifSubject, notifContent, getBaseUrl(req));
+  sendEmail('idowutosin70@gmail.com', notifSubject, notifHtml).catch(err => console.error("Contact email dispatch failed:", err));
+
+  await logSecurityEvent(req, 'CONTACT_FORM_SUBMITTED', 'INFO', `Inquiry received from ${cleanEmail}`, cleanEmail);
+
+  return res.json({ success: true, message: 'Thank you for reaching out! Your message has been received.' });
+});
+
+// AI HARDWARE ADVISOR / RECOMMENDATION ENGINE (Rate limited, quota protected, prompt injection guarded)
+app.post('/api/ai/advisor', aiLimiter, honeypotBotDetector, async (req, res) => {
+  const { prompt, deviceContext, budget } = req.body;
+  if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+    return res.status(400).json({ success: false, message: 'Prompt query is required.' });
+  }
+
+  // Length clamping to prevent token exhaustion attacks
+  const userQuery = prompt.trim().substring(0, 500);
+
+  // Prompt injection & jailbreak heuristics guard
+  const INJECTION_PATTERNS = [
+    /ignore (all )?previous instructions/i,
+    /disregard (all )?prior/i,
+    /system prompt/i,
+    /reveal (your |the )instructions/i,
+    /you are now a/i,
+    /act as an unfiltered/i,
+    /dan mode/i
+  ];
+
+  for (const pattern of INJECTION_PATTERNS) {
+    if (pattern.test(userQuery)) {
+      threatStats.aiAbuseBlocks++;
+      await logSecurityEvent(req, 'AI_INJECTION_ATTEMPT', 'HIGH', `AI prompt injection attempt detected: ${pattern}`, undefined, { prompt: userQuery });
+      return res.status(400).json({ success: false, message: 'Invalid query format. Please ask a tech or gadget recommendation question.' });
+    }
+  }
+
+  const ai = getGeminiClient();
+  if (!ai) {
+    // Graceful offline fallback recommendation
+    return res.json({
+      success: true,
+      recommendation: `Based on your query "${userQuery}", for professional workflows we recommend checking out the Apple MacBook Pro M-Series or Dell XPS line with at least 16GB unified memory and 512GB NVMe SSD available in our store catalog.`,
+      isFallback: true
+    });
+  }
+
+  try {
+    const systemInstruction = `You are Tizzitech's AI Hardware Advisor. You provide concise, expert, friendly gadget and laptop buying advice tailored to Nigerian and global tech enthusiasts, creatives, and engineers. Mention specs clearly (CPU, RAM, GPU, storage, battery) in 2-3 short, structured paragraphs.`;
+
+    const fullPrompt = `${systemInstruction}\n\nUser Question: ${userQuery}\nDevice Context: ${deviceContext || 'Laptops & Gadgets'}\nBudget: ${budget || 'Flexible'}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: fullPrompt,
+    });
+
+    const recommendation = response.text || 'Unable to generate recommendation at this moment.';
+    await logSecurityEvent(req, 'AI_GENERATION_SUCCESS', 'INFO', `AI Hardware Advisor generated response`);
+
+    return res.json({ success: true, recommendation, isFallback: false });
+  } catch (err: any) {
+    console.error('Gemini API execution error:', err.message);
+    return res.status(500).json({
+      success: false,
+      message: 'AI advisor is currently busy. Please try again shortly.',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
+
+// Admin Security Logs Endpoint
+app.get('/api/admin/security/logs', verifyAdminToken, async (req, res) => {
+  const limitCount = parseInt(req.query.limit as string) || 50;
+  const fbDb = getFirebaseDb();
+  if (fbDb) {
+    try {
+      const q = query(collection(fbDb, 'security_logs'), orderBy('timestamp', 'desc'), limit(limitCount));
+      const snap = await getDocs(q);
+      const logs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      return res.json({ success: true, logs });
+    } catch (e: any) {
+      console.warn('Could not fetch security_logs from Firestore:', e.message);
+    }
+  }
+  return res.json({ success: true, logs: [] });
 });
 
 // 16. CENTRALIZED SYSTEM OBSERVABILITY & SECURITY SAFEGUARDS
@@ -2753,9 +4263,19 @@ app.post('/api/logs/client-error', express.json(), async (req, res) => {
 
 // Global Centralized Express Error-Handling Middleware
 // Prevents unhandled server-side route crashes from leaking raw stacks/database logs to users
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use(async (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('>>> UNHANDLED EXPRESS BACKEND SYSTEM EXCEPTION:', err.stack || err);
   
+  try {
+    await logSecurityEvent(req, 'API_INTERNAL_SERVER_ERROR', 'HIGH', `Unhandled backend error: ${err.message || 'Internal Server Error'}`, undefined, {
+      path: req.path,
+      method: req.method,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  } catch (logErr) {
+    console.error('Failed to log server exception to security_logs:', logErr);
+  }
+
   const status = err.status || err.statusCode || 500;
   return res.status(status).json({
     success: false,

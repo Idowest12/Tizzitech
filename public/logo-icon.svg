@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300" width="100%" height="100%">
+  <defs>
+    <linearGradient id="icon-blue-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="40%" stop-color="#0284C7" />
+      <stop offset="80%" stop-color="#0369A1" />
+      <stop offset="100%" stop-color="#0C4A6E" />
+    </linearGradient>
+
+    <linearGradient id="icon-chrome-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="40%" stop-color="#E2E8F0" />
+      <stop offset="75%" stop-color="#94A3B8" />
+      <stop offset="100%" stop-color="#475569" />
+    </linearGradient>
+
+    <linearGradient id="icon-glow-ring" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00E5FF" stop-opacity="0.95" />
+      <stop offset="50%" stop-color="#0284C7" stop-opacity="1" />
+      <stop offset="100%" stop-color="#0066FF" stop-opacity="0.85" />
+    </linearGradient>
+
+    <filter id="icon-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="300" height="300" rx="40" fill="#050505" />
+
+  <!-- Ambient Glow -->
+  <circle cx="150" cy="150" r="85" fill="#0284C7" opacity="0.25" filter="url(#icon-glow)" />
+
+  <g transform="translate(0, 0)">
+    <!-- Back Orbital Ring -->
+    <ellipse cx="150" cy="148" rx="112" ry="32" transform="rotate(-16 150 148)"
+      fill="none" stroke="url(#icon-glow-ring)" stroke-width="4.5" opacity="0.45" filter="url(#icon-glow)" />
+
+    <!-- Left T Wing -->
+    <polygon points="70,95 140,95 130,120 85,120" fill="url(#icon-blue-grad)" />
+    <polygon points="70,95 140,95 137,100 75,100" fill="#7DD3FC" />
+    <polygon points="98,120 130,120 130,175 108,175" fill="url(#icon-chrome-grad)" />
+    <polygon points="70,95 85,120 68,130 52,107" fill="#0369A1" />
+
+    <!-- Right T Wing -->
+    <polygon points="160,95 250,105 230,130 170,120" fill="url(#icon-blue-grad)" />
+    <polygon points="160,95 250,105 246,110 165,100" fill="#7DD3FC" />
+    <polygon points="170,120 212,126 205,150 170,142" fill="url(#icon-chrome-grad)" />
+
+    <!-- Center Interlocking Spear Stem -->
+    <polygon points="130,120 150,123 150,210 130,185" fill="url(#icon-blue-grad)" />
+    <line x1="150" y1="123" x2="150" y2="210" stroke="#BAE6FD" stroke-width="1.5" />
+    <polygon points="150,123 170,120 170,185 150,210" fill="url(#icon-chrome-grad)" />
+
+    <polygon points="130,185 150,210 143,214 126,189" fill="#0369A1" />
+    <polygon points="170,185 150,210 157,214 174,189" fill="#475569" />
+
+    <!-- Front Orbital Ring Segment -->
+    <path d="M 45,160 C 65,182 225,175 260,130"
+      fill="none" stroke="url(#icon-glow-ring)" stroke-width="6.5" stroke-linecap="round" filter="url(#icon-glow)" />
+    <path d="M 45,160 C 65,182 225,175 260,130"
+      fill="none" stroke="#E0F2FE" stroke-width="2" stroke-linecap="round" />
+    
+    <circle cx="260" cy="130" r="3.5" fill="#00E5FF" filter="url(#icon-glow)" />
+  </g>
+</svg>

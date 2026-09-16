@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { jwtDecode } from 'jwt-decode';
 import { useToast } from './ToastContext';
 
-interface UserProfile {
+export interface UserProfile {
   uid: string;
   email: string | null;
   role: 'admin' | 'user';
@@ -14,16 +14,18 @@ interface UserProfile {
   lga?: string;
   codename?: string;
   phone?: string;
+  emailVerified?: boolean;
   createdAt?: any;
 }
 
-interface User {
+export interface User {
   uid: string;
   email: string | null;
   displayName: string | null;
+  emailVerified?: boolean;
 }
 
-interface AuthContextType {
+export interface AuthContextType {
   user: User | null;
   role: 'admin' | 'user' | null;
   profile: UserProfile | null;
@@ -32,6 +34,8 @@ interface AuthContextType {
   registerWithEmail: (email: string, password: string, additionalData: any) => Promise<void>;
   loginWithEmail: (email: string, password: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  resendVerificationEmail: () => Promise<void>;
   updateProfile: (updatedData: Partial<UserProfile>) => Promise<void>;
   logOut: () => Promise<void>;
   token: string | null;
@@ -42,10 +46,12 @@ const AuthContext = createContext<AuthContextType>({
   role: null,
   profile: null,
   loading: true,
-  signInWithGoogle: async (credential: string) => {},
+  signInWithGoogle: async () => {},
   registerWithEmail: async () => {},
   loginWithEmail: async () => {},
   resetPassword: async () => {},
+  changePassword: async () => {},
+  resendVerificationEmail: async () => {},
   updateProfile: async () => {},
   logOut: async () => {},
   token: null,
@@ -60,16 +66,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check local storage for session
+    // Check local storage for session and ensure JWT is not expired
     const storedToken = localStorage.getItem('authToken');
     const storedUser = localStorage.getItem('authUser');
     const storedProfile = localStorage.getItem('authProfile');
     
     if (storedToken && storedUser && storedProfile) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
-      setProfile(JSON.parse(storedProfile));
-      setRole(JSON.parse(storedProfile).role);
+      try {
+        const decoded: any = jwtDecode(storedToken);
+        const currentTime = Date.now() / 1000;
+        if (decoded.exp && decoded.exp < currentTime) {
+          // Token has expired; invalidate session securely
+          localStorage.removeItem('authToken');
+          localStorage.removeItem('authUser');
+          localStorage.removeItem('authProfile');
+          setToken(null);
+          setUser(null);
+          setProfile(null);
+          setRole(null);
+        } else {
+          setToken(storedToken);
+          setUser(JSON.parse(storedUser));
+          setProfile(JSON.parse(storedProfile));
+          setRole(JSON.parse(storedProfile).role);
+        }
+      } catch (err) {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('authUser');
+        localStorage.removeItem('authProfile');
+      }
     }
     setLoading(false);
   }, []);
@@ -233,6 +258,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    if (!token) throw new Error('You must be logged in to change your password');
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.message || 'Failed to update password');
+    }
+  };
+
+  const resendVerificationEmail = async () => {
+    if (!profile && !token) throw new Error('No user profile found');
+    const res = await fetch('/api/auth/resend-verification', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({ email: profile?.email || user?.email })
+    });
+    const data = await res.json();
+    if (!data.success) {
+      throw new Error(data.message || 'Failed to send verification email');
+    }
+  };
+
   const updateProfile = async (updatedData: Partial<UserProfile>) => {
     if (!user || !profile || !token) return;
 
@@ -275,7 +332,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, role, profile, loading, token, signInWithGoogle, registerWithEmail, loginWithEmail, resetPassword, updateProfile, logOut }}>
+    <AuthContext.Provider value={{ user, role, profile, loading, token, signInWithGoogle, registerWithEmail, loginWithEmail, resetPassword, changePassword, resendVerificationEmail, updateProfile, logOut }}>
       {children}
     </AuthContext.Provider>
   );

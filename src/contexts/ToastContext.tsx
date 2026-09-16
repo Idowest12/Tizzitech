@@ -21,7 +21,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const showToast = useCallback((message: string, type: ToastType = "success") => {
     const id = Math.random().toString(36).substring(2, 9);
-    setToasts((prev) => [...prev, { id, message, type }]);
+    // Use a macrotask timeout to guarantee that ToastProvider is never updated during any component's render phase
+    setTimeout(() => {
+      setToasts((prev) => [...prev, { id, message, type }]);
+    }, 0);
     
     // Automatically dismiss after 4 seconds
     setTimeout(() => {

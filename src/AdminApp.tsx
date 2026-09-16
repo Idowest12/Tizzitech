@@ -6,7 +6,7 @@ import { auth } from './firebase';
 
 import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
 
-import { collection, getDocs, doc, updateDoc, setDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, setDoc, onSnapshot, deleteDoc, writeBatch } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType, logAuditActivity } from './firebase';
 
 
@@ -256,6 +256,44 @@ const handleUpdateStock = async (id: string, newStock: number) => {
     }
   };
 
+  const handleBatchUpdateStock = async (updates: { id: string; stock: number }[]) => {
+    if (!updates || updates.length === 0) return;
+    try {
+      // 1. Local state update for immediate UI response
+      setProducts(prev => {
+        const map = new Map(updates.map(u => [u.id, u.stock]));
+        return prev.map(p => map.has(p.id) ? { ...p, stock: map.get(p.id)! } : p);
+      });
+
+      // 2. Batch write to Firestore
+      try {
+        const batch = writeBatch(db);
+        for (const u of updates) {
+          batch.update(doc(db, 'products', u.id), { stock: u.stock });
+        }
+        await batch.commit();
+      } catch (fsErr) {
+        console.warn("Direct Firestore batch stock update notice:", fsErr);
+      }
+
+      // 3. Sync with backend API
+      const token = sessionStorage.getItem('tizzitech_admin_token') || '';
+      await fetch('/api/admin/products/batch-stock', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ updates })
+      }).catch(err => console.error("Failed to sync batch stock update with API:", err));
+
+      logAuditActivity('BATCH_STOCK_UPDATE', `Batch updated stock for ${updates.length} products`, adminEmail);
+    } catch (e: any) {
+      console.error("Error batch updating stock:", e);
+      handleFirestoreError(e, OperationType.UPDATE, 'products/batch');
+    }
+  };
+
   const handleUpdateOrderStatus = async (id: string, newStatus: string) => {
     try {
       // 1. Local state update for instantaneous UI feedback
@@ -286,13 +324,74 @@ const handleUpdateStock = async (id: string, newStock: number) => {
     }
   };
 
+  const handleBatchUpdateOrderStatus = async (orderIds: string[], newStatus: string) => {
+    if (!orderIds || orderIds.length === 0) return;
+    try {
+      // 1. Local state update for instant UI feedback
+      setOrders(prev => {
+        const idSet = new Set(orderIds);
+        return prev.map(o => idSet.has(o.id) ? { ...o, status: newStatus as any } : o);
+      });
+
+      // 2. Batch write to Firestore
+      try {
+        const batch = writeBatch(db);
+        for (const id of orderIds) {
+          batch.update(doc(db, 'orders', id), { status: newStatus });
+        }
+        await batch.commit();
+      } catch (fsErr) {
+        console.warn("Direct Firestore batch order status notice:", fsErr);
+      }
+
+      // 3. Call backend API to persist & send status emails
+      const token = sessionStorage.getItem('tizzitech_admin_token') || '';
+      await fetch('/api/admin/orders/batch-status', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ orderIds, status: newStatus })
+      }).catch(err => console.error("Failed to batch update order status via API:", err));
+
+      logAuditActivity('BATCH_ORDER_UPDATE', `Batch updated status of ${orderIds.length} orders to "${newStatus}"`, adminEmail);
+    } catch (e: any) {
+      console.error("Error batch updating order status:", e);
+      handleFirestoreError(e, OperationType.UPDATE, 'orders/batch');
+    }
+  };
+
   const handleAddProduct = async (newProduct: Product) => {
     try {
       await setDoc(doc(db, 'products', newProduct.id), newProduct);
       setProducts(prev => [...prev, newProduct]);
+      logAuditActivity('PRODUCT_CREATE', `Created product ${newProduct.name} (${newProduct.id}) with ${newProduct.images?.length || 1} images`, adminEmail);
     } catch (e: any) {
       console.error("Error adding product:", e);
       handleFirestoreError(e, OperationType.CREATE, 'products');
+    }
+  };
+
+  const handleUpdateProduct = async (updatedProduct: Product) => {
+    try {
+      await updateDoc(doc(db, 'products', updatedProduct.id), { ...updatedProduct });
+      setProducts(prev => prev.map(p => p.id === updatedProduct.id ? updatedProduct : p));
+      
+      const token = sessionStorage.getItem('tizzitech_admin_token') || '';
+      await fetch(`/api/products/${updatedProduct.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(updatedProduct)
+      }).catch(err => console.warn('API update sync warning:', err));
+
+      logAuditActivity('PRODUCT_UPDATE', `Updated product ${updatedProduct.name} (${updatedProduct.id}) with ${updatedProduct.images?.length || 1} images`, adminEmail);
+    } catch (e: any) {
+      console.error("Error updating product:", e);
+      handleFirestoreError(e, OperationType.UPDATE, `products/${updatedProduct.id}`);
     }
   };
 
@@ -422,7 +521,10 @@ if (!isAuthenticated) {
           coupons={coupons}
           onUpdateStock={handleUpdateStock}
           onUpdateOrderStatus={handleUpdateOrderStatus}
+          onBatchUpdateStock={handleBatchUpdateStock}
+          onBatchUpdateOrderStatus={handleBatchUpdateOrderStatus}
           onAddProduct={handleAddProduct}
+          onUpdateProduct={handleUpdateProduct}
           onLogout={handleLogout}
           isLoading={isLoadingProducts || isLoadingOrders}
           onGoHome={() => {

@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { ArrowLeft, ShoppingCart, Check, Shield, Star, Plus, Minus, MessageSquare, Calendar, User, Heart } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ArrowLeft, ShoppingCart, Check, Shield, Star, Plus, Minus, MessageSquare, Calendar, User, Heart, ChevronLeft, ChevronRight, Camera } from 'lucide-react';
 import { Product, Review } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -26,21 +26,61 @@ export function ProductDetails({
   onToggleWishlist
 }: ProductDetailsProps) {
   const { profile, user } = useAuth();
-  const [activeImage, setActiveImage] = useState<string>('');
   const [purchaseQuantity, setPurchaseQuantity] = useState<number>(1);
   const [ratingInput, setRatingInput] = useState<number>(5);
   const [hoverRating, setHoverRating] = useState<number | null>(null);
   const [reviewComment, setReviewComment] = useState<string>('');
   const [reviewSuccessMsg, setReviewSuccessMsg] = useState<string>('');
 
+  // Multi-image gallery list
+  const allImages = useMemo(() => {
+    if (product.images && product.images.length > 0) {
+      return product.images;
+    }
+    return product.imageUrl ? [product.imageUrl] : [];
+  }, [product]);
+
+  const [currentIndex, setCurrentIndex] = useState<number>(0);
+  const [slideDirection, setSlideDirection] = useState<number>(1);
+  const touchStartX = useRef<number | null>(null);
+
   useEffect(() => {
-    setActiveImage(product.images && product.images.length > 0 ? product.images[0] : product.imageUrl);
+    setCurrentIndex(0);
     setPurchaseQuantity(1);
     setReviewComment('');
     setReviewSuccessMsg('');
     // Scroll to top on load
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [product]);
+
+  const handleNextImage = () => {
+    if (allImages.length <= 1) return;
+    setSlideDirection(1);
+    setCurrentIndex((prev) => (prev + 1) % allImages.length);
+  };
+
+  const handlePrevImage = () => {
+    if (allImages.length <= 1) return;
+    setSlideDirection(-1);
+    setCurrentIndex((prev) => (prev - 1 + allImages.length) % allImages.length);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
+    const diff = touchStartX.current - e.changedTouches[0].clientX;
+    if (Math.abs(diff) > 40) {
+      if (diff > 0) {
+        handleNextImage();
+      } else {
+        handlePrevImage();
+      }
+    }
+    touchStartX.current = null;
+  };
 
   // Handle adding to cart with custom quantity support
   const handleAddToCart = () => {
@@ -115,7 +155,7 @@ export function ProductDetails({
     : '0';
 
   return (
-    <div className="w-full bg-black text-white relative animate-in fade-in duration-500 min-h-screen pb-24">
+    <div className="w-full bg-black text-white relative animate-in fade-in duration-500 min-h-screen pb-24 overflow-x-hidden">
       {/* Navigation Header bar and path */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <button 
@@ -130,38 +170,108 @@ export function ProductDetails({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-start">
           
-          {/* LEFT: Complete Interactive Image Gallery */}
+          {/* LEFT: Complete Interactive Sliding Image Gallery */}
           <div className="space-y-6">
-            <div className="relative aspect-square w-full rounded-2xl bg-neutral-950 border border-neutral-900 flex items-center justify-center p-8 overflow-hidden group">
-              <motion.img 
-                key={activeImage}
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.3 }}
-                src={activeImage || undefined} 
-                alt={product.name} 
-                className="max-h-[80%] max-w-[85%] object-contain drop-shadow-[0_20px_50px_rgba(37,99,235,0.15)] transition-all duration-500 group-hover:scale-105"
-              />
-              
-              <div className="absolute top-6 right-6">
-                <span className="bg-blue-600/10 text-blue-400 border border-blue-500/20 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest backdrop-blur-md">
+            <div 
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
+              className="relative aspect-square w-full rounded-2xl bg-neutral-950 border border-neutral-900 flex items-center justify-center p-6 sm:p-8 overflow-hidden group select-none"
+            >
+              {allImages.length > 0 ? (
+                <AnimatePresence initial={false} custom={slideDirection} mode="wait">
+                  <motion.img 
+                    key={currentIndex}
+                    custom={slideDirection}
+                    initial={{ opacity: 0, x: slideDirection > 0 ? 50 : -50, scale: 0.98 }}
+                    animate={{ opacity: 1, x: 0, scale: 1 }}
+                    exit={{ opacity: 0, x: slideDirection > 0 ? -50 : 50, scale: 0.98 }}
+                    transition={{ duration: 0.28, ease: "easeOut" }}
+                    src={allImages[currentIndex]} 
+                    alt={`${product.name} - view ${currentIndex + 1}`} 
+                    referrerPolicy="no-referrer"
+                    className="max-h-[85%] max-w-[90%] object-contain drop-shadow-[0_20px_50px_rgba(37,99,235,0.15)] transition-transform duration-500 group-hover:scale-105"
+                  />
+                </AnimatePresence>
+              ) : (
+                <span className="text-neutral-600 text-sm uppercase tracking-widest font-bold">No Image Available</span>
+              )}
+
+              {/* Badges: Condition and Image Counter */}
+              <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-20">
+                <span className="bg-blue-600/10 text-blue-400 border border-blue-500/20 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest backdrop-blur-md shadow-sm">
                   {product.condition}
                 </span>
               </div>
+
+              {allImages.length > 1 && (
+                <div className="absolute top-4 left-4 sm:top-6 sm:left-6 z-20">
+                  <span className="bg-neutral-900/80 text-neutral-300 border border-neutral-800 px-3 py-1.5 rounded-full text-xs font-mono font-medium backdrop-blur-md flex items-center gap-1.5 shadow-sm">
+                    <Camera className="w-3.5 h-3.5 text-blue-400" />
+                    <span>{currentIndex + 1} / {allImages.length}</span>
+                  </span>
+                </div>
+              )}
+
+              {/* Sliding Arrow Controls (Left & Right) */}
+              {allImages.length > 1 && (
+                <>
+                  <button
+                    onClick={handlePrevImage}
+                    aria-label="Previous image"
+                    className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 p-2.5 sm:p-3 rounded-full bg-black/60 hover:bg-blue-600 text-white border border-white/10 hover:border-blue-500 shadow-xl backdrop-blur-md transition-all duration-200 z-20 active:scale-95 opacity-90 sm:opacity-0 sm:group-hover:opacity-100"
+                  >
+                    <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+                  </button>
+                  <button
+                    onClick={handleNextImage}
+                    aria-label="Next image"
+                    className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 p-2.5 sm:p-3 rounded-full bg-black/60 hover:bg-blue-600 text-white border border-white/10 hover:border-blue-500 shadow-xl backdrop-blur-md transition-all duration-200 z-20 active:scale-95 opacity-90 sm:opacity-0 sm:group-hover:opacity-100"
+                  >
+                    <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
+                  </button>
+                </>
+              )}
+
+              {/* Slider Dots */}
+              {allImages.length > 1 && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 bg-neutral-950/70 backdrop-blur-md px-3 py-1.5 rounded-full border border-neutral-800">
+                  {allImages.map((_, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        setSlideDirection(idx > currentIndex ? 1 : -1);
+                        setCurrentIndex(idx);
+                      }}
+                      aria-label={`Go to slide ${idx + 1}`}
+                      className={`h-1.5 rounded-full transition-all duration-300 ${
+                        currentIndex === idx ? 'w-6 bg-blue-500' : 'w-1.5 bg-neutral-600 hover:bg-neutral-400'
+                      }`}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* Thumbnail Carousel if supplementary images are details */}
-            {product.images && product.images.length > 1 && (
+            {/* Thumbnail Carousel if supplementary images are available */}
+            {allImages.length > 1 && (
               <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
-                {product.images.map((img, idx) => (
+                {allImages.map((img, idx) => (
                   <button
                     key={idx}
-                    onClick={() => setActiveImage(img)}
-                    className={`w-20 h-20 rounded-xl overflow-hidden border-2 flex-shrink-0 transition-all ${
-                      activeImage === img ? 'border-blue-600 bg-neutral-900 scale-105' : 'border-neutral-900 bg-neutral-950/50 opacity-60 hover:opacity-100'
+                    onClick={() => {
+                      setSlideDirection(idx > currentIndex ? 1 : -1);
+                      setCurrentIndex(idx);
+                    }}
+                    className={`relative w-20 h-20 rounded-xl overflow-hidden border-2 flex-shrink-0 transition-all ${
+                      currentIndex === idx 
+                        ? 'border-blue-500 bg-neutral-900 scale-105 shadow-lg shadow-blue-500/20' 
+                        : 'border-neutral-900 bg-neutral-950/50 opacity-60 hover:opacity-100 hover:border-neutral-700'
                     }`}
                   >
-                    <img src={img} alt={`Thumbnail ${idx + 1}`} className="w-full h-full object-cover" />
+                    <img src={img} alt={`Thumbnail ${idx + 1}`} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                    <span className="absolute bottom-1 right-1 text-[9px] font-mono px-1 py-0.2 bg-black/80 rounded text-neutral-300">
+                      #{idx + 1}
+                    </span>
                   </button>
                 ))}
               </div>

@@ -2,92 +2,105 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Helper to check if the user is the super administrator
+    // Helper to check if the user is an authenticated super administrator
     function isSuperAdmin() {
       return request.auth != null && (request.auth.token.email == 'idowutosin70@gmail.com' || request.auth.token.email == 'server-admin@tizzitech.com');
     }
 
-    // Helper to check if user owns the document
+    // Helper to check if the user is authenticated and owns the resource
     function isOwner(userId) {
       return request.auth != null && request.auth.uid == userId;
     }
 
-    // Admins list: allow unauthenticated get (lookup by secure hashed email ID) and create for superadmin, but restrict listing/writing
+    // Admins registry: only super administrator can read/write directly.
     match /admins/{adminId} {
-      allow get: if true;
-      allow create: if request.resource.data.email == 'idowutosin70@gmail.com';
-      allow list, update, delete: if isSuperAdmin();
+      allow read, write: if isSuperAdmin();
     }
 
-    // Admin OTPs (lookup and write by secure 64-char hex hashed email ID)
+    // Admin OTP credentials & Admin active sessions:
+    // Only accessible by super admin or internal server logic (bypasses direct public tampering)
     match /admin_otps/{otpId} {
-      allow get, write: if otpId is string && otpId.size() == 64;
+      allow read, write: if isSuperAdmin();
     }
 
-    // Admin Sessions (lookup and write by secure 64-char hex hashed email ID)
     match /admin_sessions/{sessionId} {
-      allow get, write: if sessionId is string && sessionId.size() == 64;
+      allow read, write: if isSuperAdmin();
     }
 
-    // Products: everyone can read, super admins can write, or anyone can update stock
+    // Products: public read-only catalog. Writing/updating restricted to super administrators.
     match /products/{productId} {
       allow read: if true;
-      allow create, delete: if isSuperAdmin();
-      allow update: if isSuperAdmin() || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock']));
+      allow write: if isSuperAdmin();
     }
 
-    // Settings: everyone can read, only super admins can write
+    // Settings: public read-only store configuration. Writing restricted to super administrators.
     match /settings/{settingId} {
       allow read: if true;
       allow write: if isSuperAdmin();
     }
 
-    // Orders: allow anyone to create and read (for real-time order tracking), but restrict updates/deletes to admins or authenticated order owners
-    match /orders/{orderId} {
-      allow read, create: if true;
-      allow update, delete: if isSuperAdmin() || (request.auth != null && (resource.data.userId == request.auth.uid || resource.data.email == request.auth.token.email));
-    }
-
-    // Order items: only super admins or the owner can read/update/delete. Anyone can create.
-    match /order_items/{itemId} {
-      allow read: if isSuperAdmin() || 
-                    (request.auth != null && (resource.data.userId == request.auth.uid || resource.data.email == request.auth.token.email));
-      allow create: if true;
-      allow update, delete: if isSuperAdmin() || 
-                    (request.auth != null && (request.resource.data.userId == request.auth.uid || request.resource.data.email == request.auth.token.email));
-    }
-
-    // Users: only super admins or the user themselves can read/write
-    match /users/{userId} {
-      allow read, write: if isSuperAdmin() || isOwner(userId);
-    }
-
-    // Coupons: anyone can read to apply, only super admins can create, update, or delete
+    // Coupons: public read to check validity. Modifying restricted to super administrators.
     match /coupons/{couponId} {
       allow read: if true;
       allow write: if isSuperAdmin();
     }
 
-    // Audit logs & Analytics: only admins can read, everyone can write
+    // Orders: allow create for checkout flow; read/update restricted to super admin or the authenticated owner.
+    match /orders/{orderId} {
+      allow create: if true;
+      allow read, update, delete: if isSuperAdmin() || (request.auth != null && (resource.data.userId == request.auth.uid || resource.data.email == request.auth.token.email));
+    }
+
+    // Order items sub-collection / records:
+    match /order_items/{itemId} {
+      allow create: if true;
+      allow read: if isSuperAdmin() || (request.auth != null && (resource.data.userId == request.auth.uid || resource.data.email == request.auth.token.email));
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // Users: only the authenticated user owning the record or a super admin can read/write their profile.
+    match /users/{userId} {
+      allow create: if true;
+      allow read, update, delete: if isSuperAdmin() || isOwner(userId) || (request.auth != null && resource.data.email == request.auth.token.email);
+    }
+
+    // Audit logs & Security logs: only super admins can read; writes allowed for logging (cannot update or delete)
     match /audit_logs/{logId} {
       allow read: if isSuperAdmin();
-      allow write: if true;
+      allow create: if true;
+      allow update, delete: if false;
+    }
+
+    match /security_logs/{logId} {
+      allow read: if isSuperAdmin();
+      allow create: if true;
+      allow update, delete: if false;
+    }
+
+    match /client_error_logs/{logId} {
+      allow read: if isSuperAdmin();
+      allow create: if true;
+      allow update, delete: if false;
     }
 
     match /analytics_visits/{visitId} {
       allow read: if isSuperAdmin();
-      allow write: if true;
+      allow create: if true;
+      allow update, delete: if false;
     }
 
     match /newsletter_subscribers/{subId} {
       allow read: if isSuperAdmin();
-      allow write: if true;
+      allow create: if true;
+      allow update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
     }
 
-    // Default catch-all
+    // Strict default-deny for all other collections
     match /{document=**} {
-      allow read, write: if isSuperAdmin();
+      allow read, write: if false;
     }
   }
 }
+
 
