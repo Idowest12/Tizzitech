@@ -1178,6 +1178,130 @@ app.post('/api/admin/hero-config', async (req, res) => {
   }
 });
 
+// Update Founder / CEO Photo & Profile
+app.post('/api/admin/founder-photo', upload.single('image'), express.json({ limit: '15mb' }), async (req, res) => {
+  try {
+    let dataURI = '';
+    let buffer: Buffer | null = null;
+
+    if (req.body && req.body.image) {
+      dataURI = req.body.image;
+      const matches = dataURI.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        buffer = Buffer.from(matches[2], 'base64');
+      }
+    } else if (req.file) {
+      buffer = req.file.buffer;
+      const b64 = req.file.buffer.toString('base64');
+      dataURI = `data:${req.file.mimetype};base64,${b64}`;
+    }
+
+    if (!dataURI && (!req.body || !req.body.photoUrl)) {
+      return res.status(400).json({ error: 'No image file or URL provided.' });
+    }
+
+    // 1. Write buffer to public folder as /founder.jpg and /founder.png
+    if (buffer) {
+      try {
+        const publicDir = path.join(process.cwd(), 'public');
+        if (!fs.existsSync(publicDir)) {
+          fs.mkdirSync(publicDir, { recursive: true });
+        }
+        fs.writeFileSync(path.join(publicDir, 'founder.jpg'), buffer);
+        fs.writeFileSync(path.join(publicDir, 'founder.jpeg'), buffer);
+        fs.writeFileSync(path.join(publicDir, 'founder.png'), buffer);
+      } catch (fErr: any) {
+        console.warn('Could not write founder image to public directory:', fErr.message);
+      }
+    }
+
+    // 2. Upload to Cloudinary if available
+    let secureUrl = req.body?.photoUrl || '/founder.jpg';
+    if (dataURI && process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+      try {
+        const result = await cloudinary.uploader.upload(dataURI, {
+          resource_type: 'image',
+          folder: 'tizzitech_founder',
+          public_id: 'ceo_idowu_oluwatosin'
+        });
+        secureUrl = result.secure_url;
+      } catch (cErr: any) {
+        console.warn('Cloudinary upload warning for founder photo:', cErr.message);
+      }
+    }
+
+    // 3. Persist to Firestore
+    const fName = req.body?.founderName || cachedSettingsList?.founderName || 'Idowu Oluwatosin A.';
+    const fTitle = req.body?.founderTitle || cachedSettingsList?.founderTitle || 'Founder & CEO • Tizzitech';
+    const fQuote = req.body?.founderQuote || cachedSettingsList?.founderQuote || 'Tech for a Smarter Tomorrow';
+    const fMessage = req.body?.founderMessage || cachedSettingsList?.founderMessage || '';
+
+    const db = getFirebaseDb();
+    if (db) {
+      try {
+        const updateObj: any = {
+          founderPhotoUrl: secureUrl,
+          founderName: fName,
+          founderTitle: fTitle,
+          founderQuote: fQuote,
+          founderUpdatedAt: new Date().toISOString()
+        };
+        if (fMessage) updateObj.founderMessage = fMessage;
+        await setDoc(doc(db, 'settings', 'global'), updateObj, { merge: true });
+      } catch (dbErr: any) {
+        console.warn('Firestore write warning for founder photo:', dbErr.message);
+      }
+    }
+
+    // 4. Update cached settings
+    cachedSettingsList = {
+      ...(cachedSettingsList || {}),
+      founderPhotoUrl: secureUrl,
+      founderName: fName,
+      founderTitle: fTitle,
+      founderQuote: fQuote,
+      ...(fMessage ? { founderMessage: fMessage } : {})
+    };
+    cachedSettingsExpiry = Date.now() + CACHE_TTL_MS;
+
+    await logServerAuditActivity(req, 'FOUNDER_PHOTO_UPDATE', `Updated CEO photo to ${secureUrl}`);
+    return res.json({ success: true, url: secureUrl, founderName: fName, founderTitle: fTitle, founderQuote: fQuote });
+  } catch (err: any) {
+    console.error('Founder photo upload error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Update Founder / CEO Details
+app.post('/api/admin/founder-config', express.json(), async (req, res) => {
+  try {
+    const { founderName, founderTitle, founderQuote, founderPhotoUrl, founderMessage } = req.body;
+    const updateData: any = {};
+    if (founderName) updateData.founderName = founderName;
+    if (founderTitle) updateData.founderTitle = founderTitle;
+    if (founderQuote) updateData.founderQuote = founderQuote;
+    if (founderPhotoUrl) updateData.founderPhotoUrl = founderPhotoUrl;
+    if (founderMessage !== undefined) updateData.founderMessage = founderMessage;
+
+    const db = getFirebaseDb();
+    if (db) {
+      try {
+        await setDoc(doc(db, 'settings', 'global'), updateData, { merge: true });
+      } catch (dbErr: any) {
+        console.warn('Firestore write warning for founder config:', dbErr.message);
+      }
+    }
+
+    cachedSettingsList = { ...(cachedSettingsList || {}), ...updateData };
+    cachedSettingsExpiry = Date.now() + CACHE_TTL_MS;
+
+    return res.json({ success: true, ...updateData });
+  } catch (err: any) {
+    console.error('Founder config update error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/products/:productId/reviews', catalogLimiter, honeypotBotDetector, async (req, res) => {
   const { productId } = req.params;
   const { author, rating, comment, date } = req.body;

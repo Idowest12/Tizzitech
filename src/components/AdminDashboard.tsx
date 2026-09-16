@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Bell, Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, AlertCircle, XCircle, BarChart3, FileText, Map as MapIcon, Star, Sliders, MapPin, DollarSign, Eye, Sparkles, CheckSquare, Square, Layers, RefreshCw, ArrowUpDown, Filter, Check, ListChecks, ArrowLeft, ArrowRight, Upload, Camera, Image as ImageIcon } from 'lucide-react';
+import { Bell, Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, AlertCircle, XCircle, BarChart3, FileText, Map as MapIcon, Star, Sliders, MapPin, DollarSign, Eye, Sparkles, CheckSquare, Square, Layers, RefreshCw, ArrowUpDown, Filter, Check, ListChecks, ArrowLeft, ArrowRight, Upload, Camera, Image as ImageIcon, User } from 'lucide-react';
 import { Product, Order, HeroConfig } from '../types';
 import { defaultHeroConfig } from '../data';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, AreaChart } from 'recharts';
@@ -8,6 +8,7 @@ import { db, auth, logAuditActivity } from '../firebase';
 import { NewsletterAdmin } from './NewsletterAdmin';
 import { AdminManager } from './AdminManager';
 import { HeroBannersManager } from './HeroBannersManager';
+import { FounderProfileManager } from './FounderProfileManager';
 import { DashboardStatsSkeleton, TableRowsSkeleton, ChartSkeleton } from './Skeleton';
 
 interface AdminDashboardProps {
@@ -31,7 +32,7 @@ interface AdminDashboardProps {
   onDeleteCoupon?: (code: string) => Promise<void>;
 }
 
-type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'hero-banners' | 'newsletter' | 'admins' | 'audit-logs';
+type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'hero-banners' | 'newsletter' | 'admins' | 'audit-logs' | 'founder';
 
 export function AdminDashboard({ 
   products, 
@@ -913,6 +914,7 @@ export function AdminDashboard({
           
           <p className="px-2 text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-2 mt-6">Finance & Marketing</p>
           <NavItem tab="hero-banners" icon={ImageIcon} label="Hero Slides & Marquee" />
+          <NavItem tab="founder" icon={User} label="Founder & CEO Profile" />
           <NavItem tab="featured" icon={Star} label="Tech of the Day" />
           <NavItem tab="invoices" icon={FileText} label="Invoices" />
           <NavItem tab="discounts" icon={Tags} label="Coupons" />
@@ -972,9 +974,42 @@ export function AdminDashboard({
           {/* DASHBOARD TAB */}
           {activeTab === 'dashboard' && (
             <div className="animate-in fade-in space-y-6">
-              <div>
-                <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-                <p className="text-neutral-400 text-sm mt-1">Welcome back. Here's what's happening with your business today.</p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+                  <p className="text-neutral-400 text-sm mt-1">Welcome back. Here's what's happening with your business today.</p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('founder')}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-neutral-900 hover:bg-blue-600 border border-neutral-800 hover:border-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-sm"
+                >
+                  <User className="w-4 h-4 text-blue-400" />
+                  <span>Founder & CEO Profile</span>
+                </button>
+              </div>
+
+              {/* Founder Profile Quick Management Banner */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-blue-950/40 via-neutral-900 to-neutral-900 border border-blue-900/40 rounded-2xl p-5 shadow-lg">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                    <User className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                      Founder & CEO Profile
+                      <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">About Us Page</span>
+                    </h2>
+                    <p className="text-xs text-neutral-400 mt-0.5">
+                      Upload the official CEO portrait, update executive name, title, quote, and founder letter.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setActiveTab('founder')}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-md active:scale-95 whitespace-nowrap cursor-pointer"
+                >
+                  Manage Founder Profile →
+                </button>
               </div>
 
               {isLoading ? (
@@ -3382,6 +3417,10 @@ export function AdminDashboard({
             </div>
           )}
 
+          {/* FOUNDER & CEO PROFILE TAB */}
+          {activeTab === 'founder' && (
+            <FounderProfileManager />
+          )}
 
           {/* OTHER PLACEHOLDER TABS */}
           {['ecommerce', 'crm', 'saas', 'charts', 'chat', 'files', 'kanban', 'calendar', 'wizard', 'forms', 'billing'].includes(activeTab) && (
