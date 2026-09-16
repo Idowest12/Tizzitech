@@ -238,6 +238,7 @@ app.use((req, res, next) => {
 // Enable JSON middleware for parsing parsed body structures
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use(express.static(path.join(process.cwd(), 'public')));
 
 app.use((req, res, next) => {
   next();
@@ -1108,13 +1109,27 @@ app.get('/api/products', catalogLimiter, async (req, res) => {
     return res.json(cachedProductsList);
   }
 
+  const sanitizeProducts = (list: any[]) => {
+    return list.map((item: any) => {
+      if ((item.id === 'p16' || (typeof item.name === 'string' && item.name.includes('S25'))) && 
+          (typeof item.imageUrl === 'string' && (item.imageUrl.includes('1606131731446') || !item.imageUrl))) {
+        return {
+          ...item,
+          imageUrl: '/products/samsung-s25-ultra.jpg',
+          images: ['/products/samsung-s25-ultra.jpg', '/products/samsung-s25-ultra-front.jpg']
+        };
+      }
+      return item;
+    });
+  };
+
   console.log('>>> FETCHING PRODUCTS (CACHE MISS)');
   const db = getFirebaseDb();
   if (db) {
     try {
       const q = collection(db, 'products');
       const querySnapshot = await getDocs(q);
-      const data = querySnapshot.docs.map((d: any) => d.data());
+      const data = sanitizeProducts(querySnapshot.docs.map((d: any) => d.data()));
       
       cachedProductsList = data;
       cachedProductsExpiry = now + CACHE_TTL_MS;
@@ -1125,7 +1140,7 @@ app.get('/api/products', catalogLimiter, async (req, res) => {
   }
 
   // Fallback to local state
-  return res.json(fallbackProducts);
+  return res.json(sanitizeProducts(fallbackProducts));
 });
 
 // 2. GET GLOBAL GLOBAL SETTINGS (WITH SERVER-SIDE CACHING)
@@ -1219,12 +1234,20 @@ app.post('/api/admin/founder-photo', upload.single('image'), express.json({ limi
     let secureUrl = req.body?.photoUrl || '/founder.jpg';
     if (dataURI && process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
       try {
-        const result = await cloudinary.uploader.upload(dataURI, {
+        const uploadPromise = cloudinary.uploader.upload(dataURI, {
           resource_type: 'image',
           folder: 'tizzitech_founder',
-          public_id: 'ceo_idowu_oluwatosin'
+          public_id: `ceo_idowu_oluwatosin_${Date.now()}`,
+          overwrite: true,
+          invalidate: true
         });
-        secureUrl = result.secure_url;
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Cloudinary upload timed out after 12s')), 12000)
+        );
+        const result: any = await Promise.race([uploadPromise, timeoutPromise]);
+        if (result && result.secure_url) {
+          secureUrl = result.secure_url;
+        }
       } catch (cErr: any) {
         console.warn('Cloudinary upload warning for founder photo:', cErr.message);
       }

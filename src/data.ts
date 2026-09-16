@@ -247,7 +247,11 @@ export const initialProducts: Product[] = [
     specs: { ram: '16GB', storage: '1TB', processor: 'Snapdragon 8 Gen 4', display: '6.9" Dynamic AMOLED' },
     description: 'The future of Samsung innovation, featuring an expanded AI suite, enhanced titanium frame, and revolutionary camera zoom capabilities.',
     stock: 8,
-    imageUrl: 'https://images.unsplash.com/photo-1606131731446-5568d87113aa?auto=format&fit=crop&w=800&q=80',
+    imageUrl: '/products/samsung-s25-ultra.jpg',
+    images: [
+      '/products/samsung-s25-ultra.jpg',
+      '/products/samsung-s25-ultra-front.jpg'
+    ],
     reviews: []
   },
   {

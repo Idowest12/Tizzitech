@@ -78,23 +78,46 @@ export default function App() {
 
   useEffect(() => {
     const handleScroll = () => {
-      // Trigger when scrolled past the hero section (~350px)
-      if (window.scrollY > 350) {
-        setShowBackToTop(true);
-      } else {
-        setShowBackToTop(false);
-      }
+      // Trigger when scrolled down (> 180px so it appears reliably on both mobile and desktop)
+      const scrollPos =
+        window.pageYOffset ||
+        window.scrollY ||
+        document.documentElement.scrollTop ||
+        document.body.scrollTop ||
+        0;
+      setShowBackToTop(scrollPos > 180);
     };
 
+    handleScroll();
     window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
+    document.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("touchmove", handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      document.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("touchmove", handleScroll);
+    };
   }, []);
 
   const scrollToTop = () => {
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
+    try {
+      window.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
+    } catch {
+      window.scrollTo(0, 0);
+    }
+    if (document.documentElement) {
+      try {
+        document.documentElement.scrollTo({ top: 0, behavior: "smooth" });
+      } catch {
+        document.documentElement.scrollTop = 0;
+      }
+    }
+    if (document.body) {
+      document.body.scrollTop = 0;
+    }
   };
 
   useEffect(() => {
@@ -618,11 +641,13 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen min-h-[100dvh] bg-black flex flex-col font-sans text-neutral-300 w-full max-w-[100vw] overflow-x-hidden">
-      <Header
-        cartCount={cartCount}
-        onOpenCart={() => setIsCartOpen(true)}
-        onOpenTracking={() => setView("tracking")}
+    <div className="min-h-screen min-h-[100dvh] bg-black flex flex-col font-sans text-neutral-300 w-full max-w-[100vw] overflow-x-clip">
+      {/* STATIC/STICKY TOP HEADER AREA (Pinned at top on Desktop & Mobile during scroll) */}
+      <div className="sticky top-0 z-50 w-full bg-neutral-950/95 backdrop-blur-md shadow-lg shadow-black/50">
+        <Header
+          cartCount={cartCount}
+          onOpenCart={() => setIsCartOpen(true)}
+          onOpenTracking={() => setView("tracking")}
           onOpenProfile={() => setView("profile")}
           onOpenAuth={() => setIsAuthOpen(true)}
           onOpenAbout={() => setView("about")}
@@ -651,7 +676,57 @@ export default function App() {
           currentView={view}
         />
 
-      <main className="flex-1 w-full max-w-[100vw] bg-black relative overflow-x-hidden">
+        {/* PROMINENT TOP PRODUCT LAUNCH ANNOUNCEMENT RIBBON */}
+        {view === "store" && !searchQuery && selectedCategory === "All" && selectedBrands.length === 0 && (
+          <aside 
+            id="pre-launch-announcement-ribbon"
+            aria-label="Pre-Launch 2026 Announcement"
+            className="w-full relative bg-neutral-950/95 border-b border-neutral-850 backdrop-blur-md overflow-hidden"
+          >
+            {/* Subtle top accent ambient glow line */}
+            <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent" />
+            
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 sm:py-2.5 flex items-center justify-between gap-3 sm:gap-6">
+              {/* Left Side: Badge & Highlighted Teaser */}
+              <div 
+                onClick={() => setView("launch")}
+                className="flex items-center gap-2.5 sm:gap-3 min-w-0 cursor-pointer group flex-1"
+              >
+                {/* Badge: Single line, no wrapping */}
+                <div className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 font-semibold text-[11px] tracking-wider uppercase whitespace-nowrap shadow-sm">
+                  <Sparkles className="w-3 h-3 text-blue-400 shrink-0" />
+                  <span>Pre-Launch 2026</span>
+                </div>
+
+                {/* Hardware Drop Highlights */}
+                <div className="flex items-center gap-2 text-xs text-neutral-300 min-w-0 truncate">
+                  <span className="hidden sm:inline text-neutral-400 font-medium">Flagship Drops:</span>
+                  <span className="font-medium text-neutral-100 truncate group-hover:text-blue-300 transition-colors">
+                    Galaxy Z Fold 7, iPhone 18 Fold & Pixel 11 Pro
+                  </span>
+                  <span className="hidden md:inline-flex text-neutral-400 text-[11px] whitespace-nowrap">
+                    • VIP Early Access & 7% Off
+                  </span>
+                </div>
+              </div>
+
+              {/* Right Side: Action Button */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  id="launch-waitlist-ribbon-btn"
+                  onClick={() => setView("launch")}
+                  className="group inline-flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold tracking-wide transition-all shadow-sm hover:shadow-blue-600/30 whitespace-nowrap active:scale-95"
+                >
+                  <span>Join Waitlist</span>
+                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                </button>
+              </div>
+            </div>
+          </aside>
+        )}
+      </div>
+
+      <main className="flex-1 w-full max-w-[100vw] bg-black relative overflow-x-clip">
         {view === "launch" ? (
           <ProductLaunchWaitlist onGoToStore={() => setView("store")} />
         ) : view === "techoftheday" ? (
@@ -727,55 +802,6 @@ export default function App() {
           </div>
         ) : (
           <div className="relative z-10 w-full flex flex-col animate-in fade-in duration-500">
-            {/* PROMINENT TOP PRODUCT LAUNCH ANNOUNCEMENT RIBBON */}
-            {!searchQuery && selectedCategory === "All" && selectedBrands.length === 0 && (
-              <aside 
-                id="pre-launch-announcement-ribbon"
-                aria-label="Pre-Launch 2026 Announcement"
-                className="w-full relative bg-neutral-950/95 border-b border-neutral-850 backdrop-blur-md overflow-hidden"
-              >
-                {/* Subtle top accent ambient glow line */}
-                <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent" />
-                
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 sm:py-2.5 flex items-center justify-between gap-3 sm:gap-6">
-                  {/* Left Side: Badge & Highlighted Teaser */}
-                  <div 
-                    onClick={() => setView("launch")}
-                    className="flex items-center gap-2.5 sm:gap-3 min-w-0 cursor-pointer group flex-1"
-                  >
-                    {/* Badge: Single line, no wrapping */}
-                    <div className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 font-semibold text-[11px] tracking-wider uppercase whitespace-nowrap shadow-sm">
-                      <Sparkles className="w-3 h-3 text-blue-400 shrink-0" />
-                      <span>Pre-Launch 2026</span>
-                    </div>
-
-                    {/* Hardware Drop Highlights */}
-                    <div className="flex items-center gap-2 text-xs text-neutral-300 min-w-0 truncate">
-                      <span className="hidden sm:inline text-neutral-400 font-medium">Flagship Drops:</span>
-                      <span className="font-medium text-neutral-100 truncate group-hover:text-blue-300 transition-colors">
-                        Galaxy Z Fold 7, iPhone 18 Fold & Pixel 11 Pro
-                      </span>
-                      <span className="hidden md:inline-flex text-neutral-400 text-[11px] whitespace-nowrap">
-                        • VIP Early Access & 7% Off
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Right Side: Action Button */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      id="launch-waitlist-ribbon-btn"
-                      onClick={() => setView("launch")}
-                      className="group inline-flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold tracking-wide transition-all shadow-sm hover:shadow-blue-600/30 whitespace-nowrap active:scale-95"
-                    >
-                      <span>Join Waitlist</span>
-                      <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-                    </button>
-                  </div>
-                </div>
-              </aside>
-            )}
-
             {/* Hero Section with Animated Background Slideshow & Delivery Ticker */}
             {!searchQuery &&
               selectedCategory === "All" &&
@@ -1164,11 +1190,12 @@ export default function App() {
         setPendingCheckout(false);
       }} />}
 
-      {/* Floating Back to Top Button */}
+      {/* Floating Back to Top Button (Universal Desktop & Mobile) */}
       <AnimatePresence>
         {showBackToTop && (
           <motion.button
             key="back-to-top"
+            id="back-to-top-btn"
             initial={{ opacity: 0, scale: 0.8, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.8, y: 16 }}
@@ -1176,9 +1203,9 @@ export default function App() {
             onClick={scrollToTop}
             aria-label="Back to top"
             title="Back to Top"
-            className="fixed bottom-6 right-6 z-40 p-3.5 sm:p-4 rounded-2xl bg-neutral-900/90 hover:bg-blue-600 text-neutral-300 hover:text-white border border-neutral-800 hover:border-blue-500/80 shadow-2xl backdrop-blur-md transition-colors duration-300 group focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer active:scale-95 flex items-center justify-center"
+            className="fixed bottom-5 right-4 sm:bottom-6 sm:right-6 z-50 w-12 h-12 sm:w-13 sm:h-13 rounded-2xl bg-neutral-900/95 sm:bg-neutral-900/90 hover:bg-blue-600 active:bg-blue-700 text-neutral-300 hover:text-white border border-neutral-750 hover:border-blue-500 shadow-2xl shadow-black/80 backdrop-blur-md transition-all duration-300 group focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer active:scale-90 flex items-center justify-center touch-manipulation select-none"
           >
-            <ArrowUp className="w-5 h-5 transition-transform duration-300 group-hover:-translate-y-1" />
+            <ArrowUp className="w-5 h-5 sm:w-5.5 sm:h-5.5 transition-transform duration-300 group-hover:-translate-y-0.5 group-active:-translate-y-1 text-neutral-200 group-hover:text-white" />
           </motion.button>
         )}
       </AnimatePresence>

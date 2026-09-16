@@ -123,9 +123,9 @@ export function Header({
   return (
     <header
       ref={dropdownRef}
-      className="sticky top-0 z-50 w-full border-b border-neutral-900 bg-neutral-950"
+      className="sticky top-0 z-50 w-full border-b border-neutral-900 bg-neutral-950/95 backdrop-blur-md shadow-md shadow-black/40"
     >
-      <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto flex h-16 sm:h-20 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         <div
           onClick={handleLogoClick}
           className="flex items-center gap-3 font-black text-2xl tracking-tighter text-white cursor-pointer group font-serif uppercase"
@@ -326,8 +326,8 @@ export function Header({
       </div>
 
       {/* Mobile Nav & Search */}
-      <div className="md:hidden flex flex-col px-4 pb-4 border-b border-neutral-900 bg-black sticky top-0 z-40">
-        <div className="flex items-center gap-3 pt-3">
+      <div className="md:hidden flex flex-col px-4 pb-3.5 border-t border-neutral-900 bg-neutral-950">
+        <div className="flex items-center gap-3 pt-2.5">
           {currentView === "profile" ? (
             <div className="flex-1 text-xs uppercase font-bold tracking-widest text-neutral-400 font-mono py-2">
               Profile Dashboard
@@ -366,7 +366,7 @@ export function Header({
 
         {/* Mobile Menu Content */}
         {isMobileMenuOpen && (
-          <div className="mt-4 pt-4 border-t border-neutral-800 flex flex-col gap-4 animate-in slide-in-from-top-4 duration-300 relative z-50 bg-black pb-2">
+          <div className="mt-3 pt-3 border-t border-neutral-800 flex flex-col gap-4 animate-in slide-in-from-top-4 duration-300 relative z-50 bg-neutral-950 max-h-[calc(100vh-140px)] overflow-y-auto pb-4">
             <nav className="flex flex-col gap-1 text-[11px] font-bold tracking-widest uppercase text-neutral-400">
               <div className="flex flex-col">
                 <button
