@@ -183,10 +183,11 @@ export function getPremiumTemplateHtml(title: string, contentHtml: string, baseU
 
 
 // Configure Cloudinary
+const CLOUDINARY_SECRET = process.env.CLOUDINARY_API_SECRET || process.env.CLOUDINARY_API_SECRE;
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
+  api_secret: CLOUDINARY_SECRET
 });
 
 // Configure Multer for in-memory uploads
@@ -1232,7 +1233,7 @@ app.post('/api/admin/founder-photo', upload.single('image'), express.json({ limi
 
     // 2. Upload to Cloudinary if available
     let secureUrl = req.body?.photoUrl || '/founder.jpg';
-    if (dataURI && process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+    if (dataURI && process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && CLOUDINARY_SECRET) {
       try {
         const uploadPromise = cloudinary.uploader.upload(dataURI, {
           resource_type: 'image',
@@ -2297,7 +2298,7 @@ app.post('/api/admin/upload-image', verifyAdminToken, express.json({limit: '10mb
     let dataURI = '';
     
     // Check if it's sent as a JSON body (base64)
-    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !CLOUDINARY_SECRET) {
       return res.status(500).json({ error: 'Cloudinary credentials are not configured on the server.' });
     }
 

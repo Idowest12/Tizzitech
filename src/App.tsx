@@ -974,7 +974,7 @@ export default function App() {
                     >
                       {loadingProducts ? (
                         Array.from({ length: 6 }).map((_, idx) => (
-                          <motion.div key={idx} variants={itemVariants}>
+                          <motion.div key={idx} variants={itemVariants} className="h-full flex flex-col">
                             <ProductCardSkeleton />
                           </motion.div>
                         ))
@@ -984,6 +984,7 @@ export default function App() {
                             key={product.id}
                             variants={itemVariants}
                             layout
+                            className="h-full flex flex-col"
                           >
                             <ProductCard
                               product={product}

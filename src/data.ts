@@ -72,11 +72,11 @@ export const initialProducts: Product[] = [
     brand: 'Samsung',
     price: 1199000,
     condition: 'New',
+    description: 'Samsung flagship smartphone with 200MP camera, built-in S-Pen, Snapdragon 8 Gen 2 processor, and dynamic AMOLED 2X display.',
     specs: { storage: '256GB', color: 'Phantom Black' },
     stock: 12,
-    imageUrl: 'https://images.unsplash.com/photo-1678911820864-e4c567cab6fb?auto=format&fit=crop&w=800&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1610945265064-0e34e5519bbf?auto=format&fit=crop&w=800&q=80',
     images: [
-      'https://images.unsplash.com/photo-1678911820864-e4c567cab6fb?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1610945265064-0e34e5519bbf?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1580910051074-3eb694886505?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1565849904461-04a58ad377e0?auto=format&fit=crop&w=800&q=80'
@@ -264,7 +264,7 @@ export const initialProducts: Product[] = [
     specs: { ram: '12GB', storage: '128GB', processor: 'Tensor G2', display: '6.7" LTPO OLED' },
     description: 'Google Pixel 7 Pro is Google’s best-of-everything phone. Powered by Google Tensor G2, it’s fast and secure, with an immersive display.',
     stock: 25,
-    imageUrl: 'https://images.unsplash.com/photo-1598327105666-5b89351cb315?auto=format&fit=crop&w=800&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1598327105666-5b89351aff97?auto=format&fit=crop&w=800&q=80',
     reviews: []
   },
   {

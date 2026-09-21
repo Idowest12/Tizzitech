@@ -10,6 +10,7 @@ import { AdminManager } from './AdminManager';
 import { HeroBannersManager } from './HeroBannersManager';
 import { FounderProfileManager } from './FounderProfileManager';
 import { DashboardStatsSkeleton, TableRowsSkeleton, ChartSkeleton } from './Skeleton';
+import { DateRangePicker, DateRangePreset, isDateInRange } from './DateRangePicker';
 
 interface AdminDashboardProps {
   auditLogs?: any[];
@@ -126,6 +127,17 @@ export function AdminDashboard({
   const [selectedOrderDetails, setSelectedOrderDetails] = useState<Order | null>(null);
   const [orderModalTab, setOrderModalTab] = useState<'details' | 'email'>('details');
   const [orderFilterTab, setOrderFilterTab] = useState<'remaining' | 'delivered' | 'cancelled' | 'all'>('remaining');
+  const [orderDateRange, setOrderDateRange] = useState<DateRangePreset>('all');
+  const [orderStartDate, setOrderStartDate] = useState<string>('');
+  const [orderEndDate, setOrderEndDate] = useState<string>('');
+
+  // Audit Logs Filter state
+  const [auditDateRange, setAuditDateRange] = useState<DateRangePreset>('all');
+  const [auditStartDate, setAuditStartDate] = useState<string>('');
+  const [auditEndDate, setAuditEndDate] = useState<string>('');
+  const [auditSearch, setAuditSearch] = useState<string>('');
+  const [auditActionFilter, setAuditActionFilter] = useState<string>('all');
+  const [auditCategory, setAuditCategory] = useState<'all' | 'STOCK_UPDATE' | 'ORDER_UPDATE' | 'PRODUCT_CREATE' | 'AUTH' | 'COUPONS'>('all');
 
   // New product form state
   const [showAddProduct, setShowAddProduct] = useState(false);
@@ -855,14 +867,85 @@ export function AdminDashboard({
     if (!matchesSearch) return false;
 
     if (orderFilterTab === 'remaining') {
-      return o.status !== 'Delivered' && o.status !== 'Cancelled';
+      if (o.status === 'Delivered' || o.status === 'Cancelled') return false;
     } else if (orderFilterTab === 'delivered') {
-      return o.status === 'Delivered';
+      if (o.status !== 'Delivered') return false;
     } else if (orderFilterTab === 'cancelled') {
-      return o.status === 'Cancelled';
+      if (o.status !== 'Cancelled') return false;
     }
+
+    const orderDateVal = o.orderDate || (o as any).createdAt || (o as any).date;
+    if (!isDateInRange(orderDateVal, orderDateRange, orderStartDate, orderEndDate)) {
+      return false;
+    }
+
     return true; // 'all'
   });
+
+  const auditActionOptions = useMemo(() => {
+    const actions = new Set<string>();
+    auditLogs.forEach(l => {
+      if (l && l.action) actions.add(l.action);
+    });
+    return ['all', ...Array.from(actions)];
+  }, [auditLogs]);
+
+  const auditCategoryCounts = useMemo(() => {
+    const counts = {
+      all: auditLogs.length,
+      STOCK_UPDATE: 0,
+      ORDER_UPDATE: 0,
+      PRODUCT_CREATE: 0,
+      AUTH: 0,
+      COUPONS: 0,
+    };
+    auditLogs.forEach(l => {
+      if (!l || !l.action) return;
+      if (l.action === 'STOCK_UPDATE' || l.action === 'BATCH_STOCK_UPDATE') counts.STOCK_UPDATE++;
+      else if (l.action === 'ORDER_UPDATE' || l.action === 'BATCH_ORDER_UPDATE') counts.ORDER_UPDATE++;
+      else if (l.action === 'PRODUCT_CREATE') counts.PRODUCT_CREATE++;
+      else if (l.action === 'LOGIN_ATTEMPT' || l.action === 'LOGOUT') counts.AUTH++;
+      else if (l.action.startsWith('COUPON_')) counts.COUPONS++;
+    });
+    return counts;
+  }, [auditLogs]);
+
+  const filteredAuditLogs = useMemo(() => {
+    return auditLogs.filter(log => {
+      if (!log) return false;
+
+      // Category filter
+      if (auditCategory !== 'all') {
+        if (auditCategory === 'STOCK_UPDATE') {
+          if (log.action !== 'STOCK_UPDATE' && log.action !== 'BATCH_STOCK_UPDATE') return false;
+        } else if (auditCategory === 'ORDER_UPDATE') {
+          if (log.action !== 'ORDER_UPDATE' && log.action !== 'BATCH_ORDER_UPDATE') return false;
+        } else if (auditCategory === 'PRODUCT_CREATE') {
+          if (log.action !== 'PRODUCT_CREATE') return false;
+        } else if (auditCategory === 'AUTH') {
+          if (log.action !== 'LOGIN_ATTEMPT' && log.action !== 'LOGOUT') return false;
+        } else if (auditCategory === 'COUPONS') {
+          if (!log.action?.startsWith('COUPON_')) return false;
+        }
+      }
+
+      if (auditActionFilter !== 'all' && log.action !== auditActionFilter) {
+        return false;
+      }
+      const q = auditSearch.toLowerCase();
+      const matchesSearch = !q ||
+        (log.email || '').toLowerCase().includes(q) ||
+        (log.action || '').toLowerCase().includes(q) ||
+        (log.details || '').toLowerCase().includes(q) ||
+        (log.ip || '').toLowerCase().includes(q);
+      if (!matchesSearch) return false;
+
+      if (!isDateInRange(log.timestamp, auditDateRange, auditStartDate, auditEndDate)) {
+        return false;
+      }
+      return true;
+    });
+  }, [auditLogs, auditCategory, auditActionFilter, auditSearch, auditDateRange, auditStartDate, auditEndDate]);
   const filteredProducts = products.filter(p => {
     const matches = (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
       (p.brand || '').toLowerCase().includes(search.toLowerCase()) || 
@@ -2155,6 +2238,26 @@ export function AdminDashboard({
                     onChange={(e) => setOrderSearch(e.target.value)}
                   />
                 </div>
+              </div>
+
+              {/* DATE RANGE FILTER */}
+              <div className="mb-6">
+                <DateRangePicker
+                  preset={orderDateRange}
+                  startDate={orderStartDate}
+                  endDate={orderEndDate}
+                  onPresetChange={setOrderDateRange}
+                  onStartDateChange={setOrderStartDate}
+                  onEndDateChange={setOrderEndDate}
+                  onReset={() => {
+                    setOrderDateRange('all');
+                    setOrderStartDate('');
+                    setOrderEndDate('');
+                  }}
+                  itemCount={filteredOrders.length}
+                  totalCount={orders.length}
+                  label="Filter Orders by Date"
+                />
               </div>
 
               {/* BATCH ORDER STATUS UPDATE TOOLBAR */}
@@ -3489,19 +3592,217 @@ export function AdminDashboard({
 
           {activeTab === 'audit-logs' && (
             <div className="animate-in fade-in space-y-6">
-              <div className="flex justify-between items-center">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  <h1 className="text-2xl font-bold text-white flex items-center gap-3"><ShieldAlert className="w-6 h-6 text-emerald-500" /> Security & Audit Logs</h1>
+                  <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+                    <ShieldAlert className="w-6 h-6 text-emerald-500" /> Security & Audit Logs
+                  </h1>
                   <p className="text-neutral-400 text-sm mt-1">Review system access, security events, and administrative activities.</p>
                 </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Category Dropdown (Compact/Quick) */}
+                  <div className="flex items-center gap-2">
+                    <Filter className="w-4 h-4 text-blue-400" />
+                    <select
+                      value={auditCategory}
+                      onChange={(e) => {
+                        setAuditCategory(e.target.value as any);
+                        setAuditActionFilter('all');
+                      }}
+                      className="bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 transition-colors cursor-pointer"
+                    >
+                      <option value="all">All Categories ({auditCategoryCounts.all})</option>
+                      <option value="STOCK_UPDATE">📦 Stock Updates (STOCK_UPDATE) ({auditCategoryCounts.STOCK_UPDATE})</option>
+                      <option value="ORDER_UPDATE">🛒 Order Updates (ORDER_UPDATE) ({auditCategoryCounts.ORDER_UPDATE})</option>
+                      <option value="PRODUCT_CREATE">✨ Product Creation (PRODUCT_CREATE) ({auditCategoryCounts.PRODUCT_CREATE})</option>
+                      <option value="AUTH">🛡️ Security & Auth ({auditCategoryCounts.AUTH})</option>
+                      <option value="COUPONS">🏷️ Coupons & Promotions ({auditCategoryCounts.COUPONS})</option>
+                    </select>
+                  </div>
+
+                  {/* Specific Action filter dropdown */}
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={auditActionFilter}
+                      onChange={(e) => setAuditActionFilter(e.target.value)}
+                      className="bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 transition-colors cursor-pointer"
+                    >
+                      <option value="all">All Actions ({auditLogs.length})</option>
+                      {auditActionOptions.filter(a => a !== 'all').map((act) => (
+                        <option key={act} value={act}>
+                          {act} ({auditLogs.filter(l => l.action === act).length})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Search bar */}
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
+                    <input
+                      type="text"
+                      className="w-full bg-neutral-950 border border-neutral-900 rounded-lg pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 transition-colors"
+                      placeholder="Search email, IP, action..."
+                      value={auditSearch}
+                      onChange={(e) => setAuditSearch(e.target.value)}
+                    />
+                  </div>
+                </div>
               </div>
+
+              {/* CATEGORY FILTER TABS / PILLS */}
+              <div className="flex flex-wrap items-center gap-2 p-1.5 bg-neutral-900/90 border border-neutral-800 rounded-2xl">
+                <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider px-2.5 flex items-center gap-1.5">
+                  <Filter className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Category:</span>
+                </span>
+
+                <button
+                  onClick={() => {
+                    setAuditCategory('all');
+                    setAuditActionFilter('all');
+                  }}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
+                    auditCategory === 'all'
+                      ? 'bg-neutral-800 text-white border-neutral-600 shadow-sm'
+                      : 'bg-neutral-950/60 text-neutral-400 hover:text-white hover:bg-neutral-800/60 border-neutral-800/80'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>All Events</span>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-neutral-700/60 text-neutral-300 font-mono">
+                    {auditCategoryCounts.all}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setAuditCategory('STOCK_UPDATE');
+                    setAuditActionFilter('all');
+                  }}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
+                    auditCategory === 'STOCK_UPDATE'
+                      ? 'bg-purple-950/80 text-purple-200 border-purple-500 shadow-sm shadow-purple-500/20'
+                      : 'bg-neutral-950/60 text-neutral-400 hover:text-purple-300 hover:bg-purple-950/30 border-neutral-800/80'
+                  }`}
+                >
+                  <Package className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Stock Updates</span>
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-900/60 text-purple-300 border border-purple-700/40">
+                    STOCK_UPDATE
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-neutral-800 text-neutral-300 font-mono">
+                    {auditCategoryCounts.STOCK_UPDATE}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setAuditCategory('ORDER_UPDATE');
+                    setAuditActionFilter('all');
+                  }}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
+                    auditCategory === 'ORDER_UPDATE'
+                      ? 'bg-emerald-950/80 text-emerald-200 border-emerald-500 shadow-sm shadow-emerald-500/20'
+                      : 'bg-neutral-950/60 text-neutral-400 hover:text-emerald-300 hover:bg-emerald-950/30 border-neutral-800/80'
+                  }`}
+                >
+                  <ShoppingCart className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Order Updates</span>
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-300 border border-emerald-700/40">
+                    ORDER_UPDATE
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-neutral-800 text-neutral-300 font-mono">
+                    {auditCategoryCounts.ORDER_UPDATE}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setAuditCategory('PRODUCT_CREATE');
+                    setAuditActionFilter('all');
+                  }}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
+                    auditCategory === 'PRODUCT_CREATE'
+                      ? 'bg-cyan-950/80 text-cyan-200 border-cyan-500 shadow-sm shadow-cyan-500/20'
+                      : 'bg-neutral-950/60 text-neutral-400 hover:text-cyan-300 hover:bg-cyan-950/30 border-neutral-800/80'
+                  }`}
+                >
+                  <Plus className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Product Creation</span>
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-cyan-900/60 text-cyan-300 border border-cyan-700/40">
+                    PRODUCT_CREATE
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-neutral-800 text-neutral-300 font-mono">
+                    {auditCategoryCounts.PRODUCT_CREATE}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setAuditCategory('AUTH');
+                    setAuditActionFilter('all');
+                  }}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
+                    auditCategory === 'AUTH'
+                      ? 'bg-blue-950/80 text-blue-200 border-blue-500 shadow-sm shadow-blue-500/20'
+                      : 'bg-neutral-950/60 text-neutral-400 hover:text-blue-300 hover:bg-blue-950/30 border-neutral-800/80'
+                  }`}
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Auth & Logins</span>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-neutral-800 text-neutral-300 font-mono">
+                    {auditCategoryCounts.AUTH}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setAuditCategory('COUPONS');
+                    setAuditActionFilter('all');
+                  }}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
+                    auditCategory === 'COUPONS'
+                      ? 'bg-amber-950/80 text-amber-200 border-amber-500 shadow-sm shadow-amber-500/20'
+                      : 'bg-neutral-950/60 text-neutral-400 hover:text-amber-300 hover:bg-amber-950/30 border-neutral-800/80'
+                  }`}
+                >
+                  <Tags className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Coupons</span>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-neutral-800 text-neutral-300 font-mono">
+                    {auditCategoryCounts.COUPONS}
+                  </span>
+                </button>
+              </div>
+
+              {/* AUDIT LOGS DATE RANGE PICKER */}
+              <DateRangePicker
+                preset={auditDateRange}
+                startDate={auditStartDate}
+                endDate={auditEndDate}
+                onPresetChange={setAuditDateRange}
+                onStartDateChange={setAuditStartDate}
+                onEndDateChange={setAuditEndDate}
+                onReset={() => {
+                  setAuditCategory('all');
+                  setAuditDateRange('all');
+                  setAuditStartDate('');
+                  setAuditEndDate('');
+                  setAuditSearch('');
+                  setAuditActionFilter('all');
+                }}
+                itemCount={filteredAuditLogs.length}
+                totalCount={auditLogs.length}
+                label="Filter Logs by Date"
+              />
               
-              <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden">
+              <div className="bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden shadow-lg">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr>
                       <th className="bg-black p-4 font-bold uppercase tracking-widest text-xs text-neutral-500 border-b border-neutral-800">Timestamp</th>
-                      <th className="bg-black p-4 font-bold uppercase tracking-widest text-xs text-neutral-500 border-b border-neutral-800">Action</th>
+                      <th className="bg-black p-4 font-bold uppercase tracking-widest text-xs text-neutral-500 border-b border-neutral-800">Action & Category</th>
                       <th className="bg-black p-4 font-bold uppercase tracking-widest text-xs text-neutral-500 border-b border-neutral-800">Admin Email</th>
                       <th className="bg-black p-4 font-bold uppercase tracking-widest text-xs text-neutral-500 border-b border-neutral-800">Details</th>
                       <th className="bg-black p-4 font-bold uppercase tracking-widest text-xs text-neutral-500 border-b border-neutral-800 text-right">Context</th>
@@ -3512,23 +3813,32 @@ export function AdminDashboard({
                       <TableRowsSkeleton cols={5} rows={6} />
                     ) : (
                       <>
-                        {auditLogs.map((log) => (
+                        {filteredAuditLogs.map((log) => (
                           <tr key={log.id} className="hover:bg-black/30 transition-colors">
-                            <td className="p-4">
+                            <td className="p-4 whitespace-nowrap">
                                <div className="text-sm font-medium text-neutral-300">{new Date(log.timestamp).toLocaleString()}</div>
                             </td>
                             <td className="p-4">
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest ${
-                                log.action === 'LOGIN_ATTEMPT' ? 'bg-blue-500/10 text-blue-400' :
-                                log.action === 'LOGOUT' ? 'bg-neutral-500/10 text-neutral-400' :
-                                log.action === 'STOCK_UPDATE' ? 'bg-purple-500/10 text-purple-400' :
-                                log.action === 'ORDER_UPDATE' ? 'bg-emerald-500/10 text-emerald-400' :
-                                'bg-neutral-800 text-neutral-300'
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider ${
+                                log.action === 'LOGIN_ATTEMPT' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+                                log.action === 'LOGOUT' ? 'bg-neutral-500/10 text-neutral-400 border border-neutral-500/20' :
+                                log.action === 'STOCK_UPDATE' || log.action === 'BATCH_STOCK_UPDATE' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' :
+                                log.action === 'ORDER_UPDATE' || log.action === 'BATCH_ORDER_UPDATE' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                                log.action === 'PRODUCT_CREATE' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20' :
+                                log.action === 'PRODUCT_UPDATE' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' :
+                                log.action?.includes('COUPON') ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
+                                'bg-neutral-800 text-neutral-300 border border-neutral-700'
                               }`}>
-                                {log.action}
+                                {(log.action === 'STOCK_UPDATE' || log.action === 'BATCH_STOCK_UPDATE') && <Package className="w-3 h-3 text-purple-400" />}
+                                {(log.action === 'ORDER_UPDATE' || log.action === 'BATCH_ORDER_UPDATE') && <ShoppingCart className="w-3 h-3 text-emerald-400" />}
+                                {log.action === 'PRODUCT_CREATE' && <Plus className="w-3 h-3 text-cyan-400" />}
+                                {log.action === 'PRODUCT_UPDATE' && <Edit2 className="w-3 h-3 text-indigo-400" />}
+                                {log.action === 'LOGIN_ATTEMPT' && <ShieldAlert className="w-3 h-3 text-blue-400" />}
+                                {log.action?.includes('COUPON') && <Tags className="w-3 h-3 text-amber-400" />}
+                                <span>{log.action}</span>
                               </span>
                             </td>
-                            <td className="p-4 text-sm text-neutral-300">{log.email}</td>
+                            <td className="p-4 text-sm text-neutral-300 font-mono text-xs">{log.email}</td>
                             <td className="p-4 text-sm text-neutral-400">{log.details}</td>
                             <td className="p-4 text-xs text-neutral-500 text-right space-y-1">
                                <div>IP: {log.ip || 'unknown'}</div>
@@ -3536,9 +3846,29 @@ export function AdminDashboard({
                             </td>
                           </tr>
                         ))}
-                        {auditLogs.length === 0 && (
+                        {filteredAuditLogs.length === 0 && (
                           <tr>
-                            <td colSpan={5} className="py-12 text-center text-neutral-500 text-sm">No audit logs found.</td>
+                            <td colSpan={5} className="py-12 text-center text-neutral-500 text-sm">
+                              <div className="flex flex-col items-center justify-center gap-2">
+                                <ShieldAlert className="w-8 h-8 text-neutral-600" />
+                                <p>No audit logs found matching the selected category, timeframe, or filter criteria.</p>
+                                {(auditCategory !== 'all' || auditDateRange !== 'all' || auditStartDate || auditEndDate || auditSearch || auditActionFilter !== 'all') && (
+                                  <button
+                                    onClick={() => {
+                                      setAuditCategory('all');
+                                      setAuditDateRange('all');
+                                      setAuditStartDate('');
+                                      setAuditEndDate('');
+                                      setAuditSearch('');
+                                      setAuditActionFilter('all');
+                                    }}
+                                    className="mt-1 text-xs text-blue-400 hover:text-blue-300 underline cursor-pointer"
+                                  >
+                                    Reset all filters
+                                  </button>
+                                )}
+                              </div>
+                            </td>
                           </tr>
                         )}
                       </>

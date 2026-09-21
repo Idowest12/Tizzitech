@@ -13,41 +13,43 @@ export const SkeletonPulse: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({ 
 // Storefront Product Grid Card Skeleton Loader
 export const ProductCardSkeleton: React.FC = () => {
   return (
-    <div className="flex flex-col bg-neutral-950 rounded-2xl overflow-hidden border border-neutral-900 w-full shadow-lg">
+    <div className="flex flex-col h-full bg-neutral-950 rounded-2xl overflow-hidden border border-neutral-900 w-full shadow-lg">
       {/* Aspect Ratio 4:3 Image Box */}
-      <div className="aspect-[4/3] bg-neutral-950/60 border-b border-neutral-900 relative flex items-center justify-center overflow-hidden rounded-t-2xl">
+      <div className="aspect-[4/3] w-full shrink-0 bg-neutral-950/60 border-b border-neutral-900/90 relative flex items-center justify-center overflow-hidden rounded-t-2xl">
         <SkeletonPulse className="w-full h-full rounded-none bg-neutral-900/60" />
         
         {/* Fake Tags */}
-        <div className="absolute top-2.5 left-2.5 flex gap-2">
-          <SkeletonPulse className="h-5 w-16 rounded-md bg-neutral-800" />
-          <SkeletonPulse className="h-5 w-12 rounded-md bg-neutral-800" />
+        <div className="absolute top-2.5 left-2.5 flex gap-1.5">
+          <SkeletonPulse className="h-4 w-14 rounded bg-neutral-800" />
+          <SkeletonPulse className="h-4 w-10 rounded bg-neutral-800" />
         </div>
         
         {/* Fake Heart */}
         <div className="absolute top-2.5 right-2.5">
-          <SkeletonPulse className="h-8 w-8 rounded-full bg-neutral-800" />
+          <SkeletonPulse className="h-7 w-7 rounded-full bg-neutral-800" />
         </div>
       </div>
 
       {/* Details Box */}
-      <div className="flex flex-col space-y-3 p-5 bg-neutral-950/80 flex-1 min-h-[160px] rounded-b-2xl">
-        {/* Brand & Name Row */}
-        <div className="flex gap-2">
-          <SkeletonPulse className="h-4 w-12 bg-neutral-800" />
-          <SkeletonPulse className="h-4 flex-1 bg-neutral-800" />
-        </div>
+      <div className="flex flex-col flex-1 p-4 sm:p-5 bg-neutral-950/80 rounded-b-2xl justify-between">
+        <div className="flex flex-col">
+          {/* Brand & Name Row (h-10 fixed) */}
+          <div className="h-10 sm:h-11 flex flex-col justify-start gap-1">
+            <SkeletonPulse className="h-3.5 w-3/4 bg-neutral-800" />
+            <SkeletonPulse className="h-3.5 w-1/2 bg-neutral-800" />
+          </div>
 
-        {/* Description Lines */}
-        <div className="space-y-2 flex-1">
-          <SkeletonPulse className="h-3 w-full bg-neutral-900" />
-          <SkeletonPulse className="h-3 w-4/5 bg-neutral-900" />
+          {/* Description Lines (h-9 fixed) */}
+          <div className="h-9 mt-1.5 space-y-1.5">
+            <SkeletonPulse className="h-3 w-full bg-neutral-900" />
+            <SkeletonPulse className="h-3 w-4/5 bg-neutral-900" />
+          </div>
         </div>
 
         {/* Price & Buy Button Row */}
-        <div className="flex items-center justify-between pt-4 border-t border-neutral-900/60 mt-auto">
-          <SkeletonPulse className="h-6 w-24 bg-neutral-800" />
-          <SkeletonPulse className="h-8 w-28 rounded-xl bg-neutral-800" />
+        <div className="flex items-center justify-between gap-2 pt-3.5 mt-4 border-t border-neutral-900/90">
+          <SkeletonPulse className="h-6 w-24 bg-neutral-800 rounded-md" />
+          <SkeletonPulse className="h-8 w-24 rounded-xl bg-neutral-800" />
         </div>
       </div>
     </div>
