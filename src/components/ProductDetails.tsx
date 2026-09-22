@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, ShoppingCart, Check, Shield, Star, Plus, Minus, MessageSquare, Calendar, User, Heart, ChevronLeft, ChevronRight, Camera } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, Check, Shield, Star, Plus, Minus, MessageSquare, Calendar, User, Heart, ChevronLeft, ChevronRight, Camera, Share2, Copy, MapPin, Truck, ExternalLink, Send } from 'lucide-react';
 import { Product, Review } from '../types';
 import { useAuth } from '../contexts/AuthContext';
+import { applyProductSeo, clearProductSeo, getWhatsAppShareUrl, getTwitterShareUrl } from '../utils/seo';
 
 interface ProductDetailsProps {
   product: Product;
@@ -31,6 +32,23 @@ export function ProductDetails({
   const [hoverRating, setHoverRating] = useState<number | null>(null);
   const [reviewComment, setReviewComment] = useState<string>('');
   const [reviewSuccessMsg, setReviewSuccessMsg] = useState<string>('');
+  const [copiedLink, setCopiedLink] = useState<boolean>(false);
+
+  // Dynamic canonical URL for sharing
+  const packageUrl = useMemo(() => {
+    if (typeof window !== 'undefined') {
+      return `${window.location.origin}/package/${product.id}`;
+    }
+    return `https://tizzitech.com.ng/package/${product.id}`;
+  }, [product.id]);
+
+  // Synchronize SEO OpenGraph, Twitter, Local Geo and Schema.org structured data
+  useEffect(() => {
+    applyProductSeo(product);
+    return () => {
+      clearProductSeo();
+    };
+  }, [product]);
 
   // Multi-image gallery list
   const allImages = useMemo(() => {
@@ -49,6 +67,7 @@ export function ProductDetails({
     setPurchaseQuantity(1);
     setReviewComment('');
     setReviewSuccessMsg('');
+    setCopiedLink(false);
     // Scroll to top on load
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [product]);
@@ -157,14 +176,25 @@ export function ProductDetails({
   return (
     <div className="w-full bg-black text-white relative animate-in fade-in duration-500 min-h-screen pb-24 overflow-x-hidden">
       {/* Navigation Header bar and path */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <button 
-          onClick={onGoBack}
-          className="flex items-center gap-2 text-neutral-400 hover:text-white transition-colors uppercase tracking-widest text-xs font-bold py-2 px-4 border border-neutral-900 rounded bg-neutral-950/40"
-        >
-          <ArrowLeft className="w-4 h-4 text-blue-500" />
-          <span>Back to products</span>
-        </button>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-wrap items-center justify-between gap-4 border-b border-neutral-900/60 mb-6">
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={onGoBack}
+            className="flex items-center gap-2 text-neutral-400 hover:text-white transition-colors uppercase tracking-widest text-xs font-bold py-2 px-4 border border-neutral-900 rounded bg-neutral-950/40"
+          >
+            <ArrowLeft className="w-4 h-4 text-blue-500" />
+            <span>Back to products</span>
+          </button>
+        </div>
+
+        {/* Breadcrumbs matching Schema.org BreadcrumbList */}
+        <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-xs text-neutral-500 font-medium overflow-x-auto whitespace-nowrap">
+          <button onClick={onGoBack} className="hover:text-blue-400 transition-colors">Home</button>
+          <span>/</span>
+          <span className="text-neutral-400">{product.category}</span>
+          <span>/</span>
+          <span className="text-neutral-200 font-semibold truncate max-w-[180px] sm:max-w-xs">{product.name}</span>
+        </nav>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -390,6 +420,79 @@ export function ProductDetails({
               <div className="flex items-center justify-center gap-2 text-[10px] uppercase font-bold tracking-widest text-neutral-500 pt-2">
                 <Shield className="w-3.5 h-3.5 text-blue-500" />
                 <span>Genuine Tech Warranty • Speedy Lagos & Nationwide dispatch</span>
+              </div>
+
+              {/* Lagos Local Delivery & Reassurance */}
+              <div className="bg-neutral-950/80 border border-neutral-900 rounded-xl p-4 space-y-2 mt-4">
+                <div className="flex items-center gap-2 text-xs font-bold text-neutral-200">
+                  <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Fast Delivery Across Lagos State</span>
+                </div>
+                <p className="text-[11px] text-neutral-400 leading-relaxed">
+                  Same-day and 24-hour door delivery across <strong>Ikeja, Lekki, Victoria Island, Yaba, Surulere, Ikoyi, Alimosho</strong> and all Lagos LGAs. Tested before dispatch with official receipt and warranty.
+                </p>
+                <div className="flex items-center gap-4 text-[10px] text-neutral-500 pt-1 font-mono">
+                  <span className="flex items-center gap-1">
+                    <Truck className="w-3 h-3 text-blue-400" /> Dispatch within 24h
+                  </span>
+                  <span>•</span>
+                  <span>Physical Pickup available at Ikeja Hub</span>
+                </div>
+              </div>
+
+              {/* Social Sharing & Local Lagos Tech Reach */}
+              <div className="bg-gradient-to-r from-neutral-950 via-neutral-900/60 to-neutral-950 border border-neutral-800 rounded-xl p-4 space-y-3 mt-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-neutral-300">
+                    <Share2 className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Share Package Deal</span>
+                  </div>
+                  <span className="text-[10px] bg-emerald-950/60 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-mono font-medium">
+                    Lagos SEO Ready
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  {/* WhatsApp Direct Share */}
+                  <a
+                    href={getWhatsAppShareUrl(product, packageUrl)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-bold transition-all text-center"
+                    title="Share package directly on WhatsApp"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>WhatsApp</span>
+                  </a>
+
+                  {/* Twitter / X Share */}
+                  <a
+                    href={getTwitterShareUrl(product, packageUrl)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-sky-600/10 hover:bg-sky-600/20 text-sky-400 hover:text-sky-300 border border-sky-500/30 rounded-lg text-xs font-bold transition-all text-center"
+                    title="Share on Twitter / X"
+                  >
+                    <span className="font-serif font-black text-xs">𝕏</span>
+                    <span>Post</span>
+                  </a>
+
+                  {/* Copy Link Button */}
+                  <button
+                    onClick={() => {
+                      if (navigator.clipboard) {
+                        navigator.clipboard.writeText(packageUrl);
+                        setCopiedLink(true);
+                        setTimeout(() => setCopiedLink(false), 2200);
+                      }
+                    }}
+                    className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-700/70 rounded-lg text-xs font-bold transition-all text-center"
+                    title="Copy direct package link"
+                  >
+                    {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedLink ? 'Copied!' : 'Copy Link'}</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Bell, Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, AlertCircle, XCircle, BarChart3, FileText, Map as MapIcon, Star, Sliders, MapPin, DollarSign, Eye, Sparkles, CheckSquare, Square, Layers, RefreshCw, ArrowUpDown, Filter, Check, ListChecks, ArrowLeft, ArrowRight, Upload, Camera, Image as ImageIcon, User } from 'lucide-react';
-import { Product, Order, HeroConfig } from '../types';
+import { Bell, Package, Plus, Search, ShieldAlert, KeyRound , Edit2, Trash2, LayoutDashboard, ShoppingCart, Tags, Mail, TrendingUp, Users, CheckCircle, AlertCircle, XCircle, BarChart3, FileText, Map as MapIcon, Star, Sliders, MapPin, DollarSign, Eye, Sparkles, CheckSquare, Square, Layers, RefreshCw, ArrowUpDown, Filter, Check, ListChecks, ArrowLeft, ArrowRight, Upload, Camera, Image as ImageIcon, User, Rocket } from 'lucide-react';
+import { Product, Order, HeroConfig, TechOfTheDayConfig } from '../types';
 import { defaultHeroConfig } from '../data';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Area, AreaChart } from 'recharts';
 import { doc, getDoc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
@@ -9,6 +9,8 @@ import { NewsletterAdmin } from './NewsletterAdmin';
 import { AdminManager } from './AdminManager';
 import { HeroBannersManager } from './HeroBannersManager';
 import { FounderProfileManager } from './FounderProfileManager';
+import { AdminLaunchControl } from './AdminLaunchControl';
+import { AdminTechOfTheDay, DEFAULT_TECH_CONFIG } from './AdminTechOfTheDay';
 import { DashboardStatsSkeleton, TableRowsSkeleton, ChartSkeleton } from './Skeleton';
 import { DateRangePicker, DateRangePreset, isDateInRange } from './DateRangePicker';
 
@@ -33,7 +35,7 @@ interface AdminDashboardProps {
   onDeleteCoupon?: (code: string) => Promise<void>;
 }
 
-type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'hero-banners' | 'newsletter' | 'admins' | 'audit-logs' | 'founder';
+type TabType = 'dashboard' | 'analytics' | 'sales-report' | 'orders' | 'products' | 'attributes' | 'customers' | 'invoices' | 'discounts' | 'delivery' | 'featured' | 'hero-banners' | 'newsletter' | 'admins' | 'audit-logs' | 'founder' | 'launch';
 
 export function AdminDashboard({ 
   products, 
@@ -317,6 +319,16 @@ export function AdminDashboard({
     return defaultHeroConfig;
   });
   
+  const [techOfTheDayConfig, setTechOfTheDayConfig] = useState<TechOfTheDayConfig>(() => {
+    const saved = localStorage.getItem('tizzitech_tech_of_the_day');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return DEFAULT_TECH_CONFIG;
+  });
+
   React.useEffect(() => {
     // 1. Fetch settings from newsletter_campaigns/global_settings (legacy)
     getDoc(doc(db, 'newsletter_campaigns', 'global_settings'))
@@ -332,7 +344,7 @@ export function AdminDashboard({
         console.warn("Could not fetch global settings in AdminDashboard (offline fallback enabled):", err);
       });
 
-    // 2. Fetch heroConfig & settings from settings/global
+    // 2. Fetch heroConfig & techOfTheDay from settings/global
     getDoc(doc(db, 'settings', 'global'))
       .then(snap => {
         if (snap.exists()) {
@@ -341,11 +353,26 @@ export function AdminDashboard({
             setHeroConfig(d.heroConfig);
             localStorage.setItem('tizzitech_hero_config', JSON.stringify(d.heroConfig));
           }
+          if (d.techOfTheDay) {
+            setTechOfTheDayConfig(d.techOfTheDay);
+            localStorage.setItem('tizzitech_tech_of_the_day', JSON.stringify(d.techOfTheDay));
+          }
         }
       })
       .catch(err => {
         console.warn("Could not fetch settings/global in AdminDashboard:", err);
       });
+
+    // 3. Also fetch tech-of-the-day from backend endpoint
+    fetch('/api/tech-of-the-day')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.techOfTheDay && data.techOfTheDay.articles) {
+          setTechOfTheDayConfig(data.techOfTheDay);
+          localStorage.setItem('tizzitech_tech_of_the_day', JSON.stringify(data.techOfTheDay));
+        }
+      })
+      .catch(err => console.warn('Could not fetch /api/tech-of-the-day in AdminDashboard:', err));
   }, []);
   
   const saveSettings = async (b, c, z) => {
@@ -380,6 +407,34 @@ export function AdminDashboard({
       });
     } catch (err) {
       console.warn("Could not push hero config to backend API:", err);
+    }
+  };
+
+  const handleSaveTechOfTheDayConfig = async (newConfig: TechOfTheDayConfig) => {
+    setTechOfTheDayConfig(newConfig);
+    localStorage.setItem('tizzitech_tech_of_the_day', JSON.stringify(newConfig));
+
+    // Save to Firestore
+    try {
+      await setDoc(doc(db, 'settings', 'global'), { techOfTheDay: newConfig }, { merge: true });
+      logAuditActivity('TECH_OF_THE_DAY_UPDATE', `Updated Tech of the Day stories (${newConfig.articles?.length || 0} articles)`, auth.currentUser?.email || 'admin');
+    } catch (err) {
+      console.warn("Could not write directly to Firestore settings/global:", err);
+    }
+
+    // Push to server endpoint to invalidate backend cache
+    try {
+      const token = sessionStorage.getItem('tizzitech_admin_token') || '';
+      await fetch('/api/admin/tech-of-the-day', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ techOfTheDay: newConfig })
+      });
+    } catch (err) {
+      console.warn("Could not push tech of the day to backend API:", err);
     }
   };
 
@@ -971,7 +1026,7 @@ export function AdminDashboard({
   const lowStockProducts = products.filter(p => p.stock > 0 && p.stock <= 5).length;
   const outOfStockProducts = products.filter(p => p.stock === 0).length;
 
-  const NavItem = ({ tab, icon: Icon, label, badge }: { tab: TabType, icon: any, label: string, badge?: number }) => {
+  const NavItem = ({ tab, icon: Icon, label, badge }: { tab: TabType, icon: any, label: string, badge?: number | string }) => {
     if (navSearch && !label.toLowerCase().includes(navSearch.toLowerCase())) return null;
     return (
     <button 
@@ -1029,6 +1084,7 @@ export function AdminDashboard({
           
           <p className="px-2 text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-2 mt-6">Finance & Marketing</p>
           <NavItem tab="hero-banners" icon={ImageIcon} label="Hero Slides & Marquee" />
+          <NavItem tab="launch" icon={Rocket} label="Launch & Countdown" badge="Drops" />
           <NavItem tab="founder" icon={User} label="Founder & CEO Profile" />
           <NavItem tab="featured" icon={Star} label="Tech of the Day" />
           <NavItem tab="invoices" icon={FileText} label="Invoices" />
@@ -2685,30 +2741,10 @@ export function AdminDashboard({
 
           {/* FEATURED / TECH OF THE DAY TAB */}
           {activeTab === 'featured' && (
-            <div className="animate-in fade-in space-y-6">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h1 className="text-2xl font-bold text-white">Tech of the Day</h1>
-                  <p className="text-neutral-400 text-sm mt-1">Select and feature a specific product on the front page.</p>
-                </div>
-                <button onClick={() => alert("Featured product updated!")} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm tracking-wide transition-colors">Save Changes</button>
-              </div>
-              <div className="bg-neutral-950 border border-neutral-900 rounded-2xl p-6 shadow-sm">
-                <div className="mb-6">
-                   <label className="block text-sm font-bold text-neutral-400 uppercase tracking-widest mb-2">Current Featured Product</label>
-                   <select className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors">
-                      <option value="">Select a product...</option>
-                      {products.map(p => (
-                         <option key={p.id} value={p.id}>{p.name} - ₦{p.price.toLocaleString()}</option>
-                      ))}
-                   </select>
-                </div>
-                <div>
-                   <label className="block text-sm font-bold text-neutral-400 uppercase tracking-widest mb-2">Editor's Note (Optional)</label>
-                   <textarea className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors h-32 resize-none" placeholder="Add a short description about why this is the Tech of the Day..."></textarea>
-                </div>
-              </div>
-            </div>
+            <AdminTechOfTheDay
+              initialConfig={techOfTheDayConfig}
+              onSaveConfig={handleSaveTechOfTheDayConfig}
+            />
           )}
 
           {/* ATTRIBUTES TAB */}
@@ -3882,6 +3918,11 @@ export function AdminDashboard({
           {/* FOUNDER & CEO PROFILE TAB */}
           {activeTab === 'founder' && (
             <FounderProfileManager />
+          )}
+
+          {/* PRE-LAUNCH & DROPS LAUNCH MANAGER TAB */}
+          {activeTab === 'launch' && (
+            <AdminLaunchControl onSuccessToast={showEmailToast} />
           )}
 
           {/* OTHER PLACEHOLDER TABS */}

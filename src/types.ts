@@ -70,3 +70,37 @@ export interface HeroConfig {
   autoplaySpeed?: number; // in seconds, default 5
 }
 
+export interface LaunchSettings {
+  targetDate: string; // ISO date string e.g. "2026-12-22T00:00:00+01:00"
+  isLaunched: boolean;
+  title?: string;
+  announcement?: string;
+  lastUpdated?: string;
+  updatedBy?: string;
+}
+
+export interface TechArticle {
+  id: string;
+  title: string;
+  subtitle?: string;
+  badge: string;
+  date: string;
+  author?: string;
+  imageUrl: string;
+  images?: string[];
+  summary?: string;
+  paragraphs: string[];
+  keyUpgrades?: string[];
+  specs?: Record<string, string>;
+  ctaText?: string;
+  ctaLink?: string;
+  featured?: boolean;
+}
+
+export interface TechOfTheDayConfig {
+  headline?: string;
+  subheadline?: string;
+  articles: TechArticle[];
+  lastUpdated?: string;
+}
+

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles,
@@ -17,16 +17,20 @@ import {
   ArrowRight,
   Mail,
   User,
-  Sliders,
   Check,
   Share2,
   Award,
-  Lock
+  Lock,
+  PartyPopper
 } from "lucide-react";
 import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "../contexts/AuthContext";
 import { db } from "../firebase";
 import { collection, addDoc, doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { LaunchSettings } from "../types";
+
+// Target date: exactly 90 days from tomorrow (Dec 22, 2026, 00:00:00 GMT+1)
+const DEFAULT_LAUNCH_TARGET_ISO = "2026-12-22T00:00:00+01:00";
 
 interface LaunchProduct {
   id: string;
@@ -47,7 +51,7 @@ const LAUNCH_PRODUCTS: LaunchProduct[] = [
     name: "Samsung Galaxy Z Fold 7 Ultra",
     brand: "Samsung",
     badge: "Official Next-Gen Foldable",
-    releaseWindow: "Q3 2026 / Expected in ~120 Days",
+    releaseWindow: "Q4 2026 / 90-Day Drop",
     imageUrl: "https://images.unsplash.com/photo-1598327105666-5b89351aff97?auto=format&fit=crop&w=1000&q=80",
     keySpecs: [
       "8.0\" QHD+ 120Hz Flex AMOLED",
@@ -112,30 +116,54 @@ const LAUNCH_PRODUCTS: LaunchProduct[] = [
   }
 ];
 
-export function ProductLaunchWaitlist({ onGoToStore }: { onGoToStore: () => void }) {
+interface ProductLaunchWaitlistProps {
+  onGoToStore: () => void;
+  launchSettings?: LaunchSettings;
+}
+
+export function ProductLaunchWaitlist({ onGoToStore, launchSettings: propLaunchSettings }: ProductLaunchWaitlistProps) {
   const { showToast } = useToast();
   const { user, profile } = useAuth();
 
-  // Flexible Countdown State (Defaults to ~120 Days)
-  const [targetDays, setTargetDays] = useState<number>(() => {
-    const saved = localStorage.getItem("tizz_waitlist_target_days");
-    return saved ? parseInt(saved, 10) : 120;
-  });
+  // Settings synced from backend
+  const [launchConfig, setLaunchConfig] = useState<LaunchSettings | null>(propLaunchSettings || null);
 
-  // Calculate target date based on targetDays from now
-  const [targetTimestamp, setTargetTimestamp] = useState<number>(() => {
-    return Date.now() + targetDays * 24 * 60 * 60 * 1000;
-  });
+  useEffect(() => {
+    if (!propLaunchSettings) {
+      fetch("/api/settings")
+        .then((res) => res.json())
+        .then((data) => {
+          if (data?.launchSettings) {
+            setLaunchConfig(data.launchSettings);
+          }
+        })
+        .catch((err) => console.warn("Could not load launch settings:", err));
+    } else {
+      setLaunchConfig(propLaunchSettings);
+    }
+  }, [propLaunchSettings]);
 
-  const [timeLeft, setTimeLeft] = useState({
-    days: targetDays,
-    hours: 14,
-    minutes: 32,
-    seconds: 45
-  });
+  // Target date locked to 90 days from tomorrow (Dec 22, 2026) or admin override
+  const targetDateStr = launchConfig?.targetDate || DEFAULT_LAUNCH_TARGET_ISO;
+  const isManuallyLaunched = Boolean(launchConfig?.isLaunched);
 
-  const [showAdjustModal, setShowAdjustModal] = useState(false);
-  const [customDaysInput, setCustomDaysInput] = useState(targetDays.toString());
+  // Target timestamp in ms
+  const targetTimestamp = useMemo(() => {
+    const parsed = new Date(targetDateStr).getTime();
+    return isNaN(parsed) ? new Date(DEFAULT_LAUNCH_TARGET_ISO).getTime() : parsed;
+  }, [targetDateStr]);
+
+  const [timeLeft, setTimeLeft] = useState(() => {
+    const diff = targetTimestamp - Date.now();
+    if (diff <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0, total: 0 };
+    return {
+      days: Math.floor(diff / (1000 * 60 * 60 * 24)),
+      hours: Math.floor((diff / (1000 * 60 * 60)) % 24),
+      minutes: Math.floor((diff / 1000 / 60) % 60),
+      seconds: Math.floor((diff / 1000) % 60),
+      total: diff
+    };
+  });
 
   // Form State
   const [email, setEmail] = useState(profile?.email || user?.email || "");
@@ -166,32 +194,28 @@ export function ProductLaunchWaitlist({ onGoToStore }: { onGoToStore: () => void
 
   // Update Countdown Timer every second
   useEffect(() => {
-    const interval = setInterval(() => {
+    const updateCountdown = () => {
       const now = Date.now();
       const difference = targetTimestamp - now;
 
       if (difference <= 0) {
-        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0, total: 0 });
       } else {
         const days = Math.floor(difference / (1000 * 60 * 60 * 24));
         const hours = Math.floor((difference / (1000 * 60 * 60)) % 24);
         const minutes = Math.floor((difference / 1000 / 60) % 60);
         const seconds = Math.floor((difference / 1000) % 60);
-        setTimeLeft({ days, hours, minutes, seconds });
+        setTimeLeft({ days, hours, minutes, seconds, total: difference });
       }
-    }, 1000);
+    };
 
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
     return () => clearInterval(interval);
   }, [targetTimestamp]);
 
-  const handleAdjustCountdown = (newDays: number) => {
-    setTargetDays(newDays);
-    localStorage.setItem("tizz_waitlist_target_days", newDays.toString());
-    const newTimestamp = Date.now() + newDays * 24 * 60 * 60 * 1000;
-    setTargetTimestamp(newTimestamp);
-    setShowAdjustModal(false);
-    showToast(`Launch countdown adjusted to ${newDays} days!`, "success");
-  };
+  const isLive = isManuallyLaunched || timeLeft.total <= 0;
+
 
   const handleSubscribeWaitlist = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -296,17 +320,8 @@ export function ProductLaunchWaitlist({ onGoToStore }: { onGoToStore: () => void
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setShowAdjustModal(true)}
-              className="text-xs text-neutral-300 hover:text-white bg-neutral-900/80 hover:bg-neutral-850 border border-neutral-800 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-colors font-medium"
-              title="Adjust launch countdown days"
-            >
-              <Sliders className="h-3.5 w-3.5 text-blue-400" />
-              <span>Countdown ({targetDays} Days)</span>
-            </button>
-
-            <button
               onClick={onGoToStore}
-              className="text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 px-4 py-2 rounded-xl flex items-center gap-2 transition-all hover:border-neutral-700"
+              className="text-xs font-semibold text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 px-4 py-2 rounded-xl flex items-center gap-2 transition-all hover:border-neutral-700 shadow-sm"
             >
               <span>Back to Store</span>
               <ChevronRight className="h-4 w-4" />
@@ -314,51 +329,124 @@ export function ProductLaunchWaitlist({ onGoToStore }: { onGoToStore: () => void
           </div>
         </div>
 
-        {/* HERO COUNTDOWN HEADER */}
-        <section className="py-12 md:py-16 text-center max-w-4xl mx-auto">
+        {/* CELEBRATORY LAUNCH CONFETTI ANIMATION (When launched or countdown ends) */}
+        {isLive && (
+          <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
+            {Array.from({ length: 35 }).map((_, i) => (
+              <motion.div
+                key={i}
+                initial={{
+                  top: -20,
+                  left: `${(i * 2.9) % 100}%`,
+                  opacity: 1,
+                  scale: 0.7 + (i % 4) * 0.15,
+                  rotate: 0
+                }}
+                animate={{
+                  top: "110%",
+                  opacity: [1, 1, 0.8, 0],
+                  rotate: [0, (i % 2 === 0 ? 360 : -360) * 2]
+                }}
+                transition={{
+                  duration: 3.5 + (i % 4) * 0.7,
+                  repeat: Infinity,
+                  delay: (i % 12) * 0.22,
+                  ease: "linear"
+                }}
+                className={`absolute rounded-sm ${
+                  [
+                    'bg-blue-500',
+                    'bg-amber-400',
+                    'bg-emerald-400',
+                    'bg-purple-400',
+                    'bg-cyan-400',
+                    'bg-rose-400'
+                  ][i % 6]
+                } ${i % 2 === 0 ? 'w-3 h-3' : 'w-2 h-4'}`}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* HERO COUNTDOWN / LAUNCH HEADER */}
+        <section className="py-12 md:py-16 text-center max-w-4xl mx-auto relative">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
           >
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-950/50 border border-blue-500/30 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-6 shadow-sm">
-              <Sparkles className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-              <span>Next-Gen Smartphone & Wearable Drops</span>
-            </div>
-
-            <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white uppercase font-serif leading-none mb-6">
-              The Future of Tech <br />
-              <span className="text-blue-400">
-                Is Almost Here
-              </span>
-            </h1>
-
-            <p className="text-neutral-300 text-sm sm:text-base max-w-2xl mx-auto mb-10 leading-relaxed font-sans">
-              Be among the privileged first in West Africa to reserve upcoming flagship foldables, high-tier smartphones, and smartwatch innovations. Exclusive pre-order priority, zero-deposit reservation, and guaranteed warranty.
-            </p>
-
-            {/* COUNTDOWN CLOCK */}
-            <div className="grid grid-cols-4 gap-2 sm:gap-4 max-w-2xl mx-auto mb-10">
-              {[
-                { label: "DAYS", value: timeLeft.days },
-                { label: "HOURS", value: timeLeft.hours },
-                { label: "MINUTES", value: timeLeft.minutes },
-                { label: "SECONDS", value: timeLeft.seconds }
-              ].map((unit, idx) => (
-                <div
-                  key={idx}
-                  className="bg-neutral-900/80 border border-neutral-800/90 hover:border-neutral-700 backdrop-blur-md rounded-2xl p-3.5 sm:p-5 flex flex-col items-center justify-center shadow-lg relative overflow-hidden group transition-all"
-                >
-                  <div className="absolute top-0 inset-x-0 h-[2px] bg-blue-500/40" />
-                  <span className="text-2xl sm:text-4xl lg:text-5xl font-mono font-bold text-white tracking-tight">
-                    {String(unit.value).padStart(2, "0")}
-                  </span>
-                  <span className="text-[10px] sm:text-xs font-semibold text-neutral-400 tracking-wider uppercase mt-1">
-                    {unit.label}
-                  </span>
+            {isLive ? (
+              <>
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-950/60 border border-emerald-500/40 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-6 shadow-lg shadow-emerald-500/10 animate-pulse">
+                  <PartyPopper className="h-4 w-4 text-emerald-400 shrink-0" />
+                  <span>Official Drop Is Live Now!</span>
                 </div>
-              ))}
-            </div>
+
+                <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white uppercase font-serif leading-tight mb-6">
+                  The Future of Tech <br />
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-emerald-400 to-cyan-400">
+                    Has Officially Arrived!
+                  </span>
+                </h1>
+
+                <p className="text-neutral-300 text-sm sm:text-base max-w-2xl mx-auto mb-8 leading-relaxed font-sans">
+                  The wait is over! All flagship smartphones, foldables, and wearable innovations are now unlocked for priority order reservation. Enjoy 7% VIP launch pricing and fast Lagos dispatch.
+                </p>
+
+                <div className="flex flex-wrap items-center justify-center gap-4 mb-12">
+                  <button
+                    onClick={onGoToStore}
+                    className="px-8 py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 text-white font-bold text-sm uppercase tracking-wider shadow-xl shadow-blue-600/25 flex items-center gap-2.5 transform active:scale-95 transition-all"
+                  >
+                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    <span>Shop The Live Drops Now</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-950/50 border border-blue-500/30 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-6 shadow-sm">
+                  <Sparkles className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                  <span>{launchConfig?.title || "Next-Gen Smartphone & Wearable Drops"}</span>
+                </div>
+
+                <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight text-white uppercase font-serif leading-none mb-6">
+                  The Future of Tech <br />
+                  <span className="text-blue-400">
+                    Is Almost Here
+                  </span>
+                </h1>
+
+                <p className="text-neutral-300 text-sm sm:text-base max-w-2xl mx-auto mb-10 leading-relaxed font-sans">
+                  {launchConfig?.announcement ||
+                    "Be among the privileged first in West Africa to reserve upcoming flagship foldables, high-tier smartphones, and smartwatch innovations. Exclusive pre-order priority, zero-deposit reservation, and guaranteed warranty."}
+                </p>
+
+                {/* COUNTDOWN CLOCK - Locked to 90 Days from tomorrow */}
+                <div className="grid grid-cols-4 gap-2 sm:gap-4 max-w-2xl mx-auto mb-10">
+                  {[
+                    { label: "DAYS", value: timeLeft.days },
+                    { label: "HOURS", value: timeLeft.hours },
+                    { label: "MINUTES", value: timeLeft.minutes },
+                    { label: "SECONDS", value: timeLeft.seconds }
+                  ].map((unit, idx) => (
+                    <div
+                      key={idx}
+                      className="bg-neutral-900/80 border border-neutral-800/90 hover:border-neutral-700 backdrop-blur-md rounded-2xl p-3.5 sm:p-5 flex flex-col items-center justify-center shadow-lg relative overflow-hidden group transition-all"
+                    >
+                      <div className="absolute top-0 inset-x-0 h-[2px] bg-blue-500/40" />
+                      <span className="text-2xl sm:text-4xl lg:text-5xl font-mono font-bold text-white tracking-tight">
+                        {String(unit.value).padStart(2, "0")}
+                      </span>
+                      <span className="text-[10px] sm:text-xs font-semibold text-neutral-400 tracking-wider uppercase mt-1">
+                        {unit.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
 
             {/* IMMEDIATE VIP ACCESS SIGNUP FORM (PHASE 1 - RIGHT NEXT TO COUNTDOWN) */}
             <div id="vip-signup-form" className="max-w-3xl mx-auto bg-neutral-900/70 border border-neutral-800/90 rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden text-left mb-14">
@@ -628,80 +716,6 @@ export function ProductLaunchWaitlist({ onGoToStore }: { onGoToStore: () => void
           </div>
         </section>
       </div>
-
-      {/* ADJUST COUNTDOWN MODAL (Allows user/tester to adjust countdown days) */}
-      <AnimatePresence>
-        {showAdjustModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 max-w-sm w-full relative shadow-2xl"
-            >
-              <h3 className="text-lg font-bold text-white mb-2 font-serif">
-                Adjust Launch Countdown
-              </h3>
-              <p className="text-xs text-neutral-400 mb-4">
-                Set or reduce the launch timer days anytime as requested (e.g., 120, 90, 30, 7 days).
-              </p>
-
-              <div className="space-y-3 mb-6">
-                <div className="grid grid-cols-4 gap-2">
-                  {[120, 90, 30, 7].map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => handleAdjustCountdown(d)}
-                      className={`py-2 rounded-lg text-xs font-mono font-bold border transition-colors ${
-                        targetDays === d
-                          ? "bg-blue-600/20 text-blue-400 border-blue-500/40"
-                          : "bg-neutral-950 text-neutral-400 border-neutral-800 hover:text-white"
-                      }`}
-                    >
-                      {d} Days
-                    </button>
-                  ))}
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-1">
-                    Custom Days Input
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="365"
-                    value={customDaysInput}
-                    onChange={(e) => setCustomDaysInput(e.target.value)}
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  onClick={() => setShowAdjustModal(false)}
-                  className="px-4 py-2 text-xs font-bold text-neutral-400 hover:text-white"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    const parsed = parseInt(customDaysInput, 10);
-                    if (parsed && parsed > 0) {
-                      handleAdjustCountdown(parsed);
-                    }
-                  }}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs uppercase tracking-wider"
-                >
-                  Apply Days
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

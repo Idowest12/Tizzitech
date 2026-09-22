@@ -1144,11 +1144,100 @@ app.get('/api/products', catalogLimiter, async (req, res) => {
   return res.json(sanitizeProducts(fallbackProducts));
 });
 
-// 2. GET GLOBAL GLOBAL SETTINGS (WITH SERVER-SIDE CACHING)
+const DEFAULT_LAUNCH_SETTINGS = {
+  targetDate: '2026-12-22T00:00:00+01:00',
+  isLaunched: false,
+  title: 'Next-Gen Smartphone & Wearable Drops',
+  announcement: 'Be among the privileged first in West Africa to reserve upcoming flagship foldables, high-tier smartphones, and smartwatch innovations.'
+};
+
+const DEFAULT_TECH_OF_THE_DAY = {
+  headline: 'Tech of the Day',
+  subheadline: 'A deep dive into the latest product launches, innovations, and breaking tech events.',
+  articles: [
+    {
+      id: 'iphone-18-duo-reveal-2026',
+      title: 'Apple Keynote: iPhone 18 & The First Ever iPhone Duo Unveiled',
+      subtitle: 'Apple makes history with its first dual-screen foldable alongside the powerhouse iPhone 18 Pro series.',
+      badge: 'Apple Keynote 2026',
+      date: 'September 2026',
+      author: 'Tizzitech Editorial Desk',
+      imageUrl: 'https://images.unsplash.com/photo-1592750475338-74b7b21085ab?q=80&w=2670&auto=format&fit=crop',
+      images: [
+        'https://images.unsplash.com/photo-1592750475338-74b7b21085ab?q=80&w=2670&auto=format&fit=crop',
+        'https://images.unsplash.com/photo-1510557880182-3d4d3cba35a5?q=80&w=2670&auto=format&fit=crop',
+        'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?q=80&w=2670&auto=format&fit=crop'
+      ],
+      summary: 'Tim Cook and the Apple engineering team have introduced the revolutionary iPhone Duo — Apple\'s first dual-folding smartphone featuring dual Ultra Retina XDR displays — alongside the boundary-pushing iPhone 18 and iPhone 18 Pro.',
+      paragraphs: [
+        'Apple has officially rewritten the smartphone playbook with the momentous debut of the all-new iPhone Duo alongside the flagship iPhone 18 series. Billed as the most ambitious hardware breakthrough since the original iPhone in 2007, the iPhone Duo merges a compact outer phone with a book-style unfolding 7.9-inch seamless Ultra Retina display.',
+        'At the core of both machines is the 2nm Apple A20 Pro Bionic silicon, delivering a 45% uplift in machine learning compute dedicated entirely to on-device Apple Intelligence 2.0. The iPhone Duo introduces an aerospace-grade titanium fluid-gear hinge with zero creasing, allowing users to run macOS-inspired split multitasking, drag-and-drop between dual app screens, and capture spatial photography effortlessly.',
+        'Meanwhile, the standard iPhone 18 and 18 Pro introduce Under-Display Face ID, an invisible camera notch, a 200MP fusion optical sensor with 10x periscope zoom, and a revolutionary Solid-State battery architecture extending screen-on battery life up to 36 hours on a single charge.',
+        'Pre-orders for the iPhone 18 and iPhone Duo are slated to open shortly, with guaranteed priority allocation and express doorstep delivery across Lagos and nationwide through Tizzitech.'
+      ],
+      keyUpgrades: [
+        'A20 Pro Bionic (2nm) with Apple Intelligence 2.0 Engine',
+        'First Ever "iPhone Duo" with 7.9-inch Creaseless Dual Super Retina XDR Display',
+        'Aerospace Titanium Liquid Hinge with 360-degree Flex Positioning',
+        '200MP Fusion Sensor with 10x Optical Periscope Zoom & 8K ProRes Video',
+        'Next-Gen Solid-State Battery with 36-hour real world uptime',
+        'Sub-Display Face ID and Ultra-Thin Borderless Ceramic Shield'
+      ],
+      specs: {
+        'Processor': 'Apple A20 Pro (2nm) 6-core CPU / 8-core GPU',
+        'Display (Duo)': '6.3" Outer OLED + 7.9" Foldable Ultra Retina XDR 1-144Hz',
+        'Camera Matrix': '200MP Main + 48MP Ultra-Wide + 48MP 10x Periscope Telephoto',
+        'Hinge & Build': 'Grade 5 Titanium Armor + Ceramic Shield Glass 3',
+        'Connectivity': '5G Advanced, Wi-Fi 7, Satellite Messaging & SOS'
+      },
+      ctaText: 'Join Priority Waitlist',
+      ctaLink: '/?view=launch',
+      featured: true
+    },
+    {
+      id: 'galaxy-s26-ultra',
+      title: 'The Next Frontier: Samsung Galaxy S26 Ultra',
+      subtitle: 'Proactive AI, 200MP zero-delay shutter, and titanium armor redefine Android excellence.',
+      badge: 'New Release',
+      date: '2026',
+      author: 'Tizzitech Tech Lab',
+      imageUrl: 'https://images.unsplash.com/photo-1610945415295-d9bbf067e59c?q=80&w=2671&auto=format&fit=crop',
+      images: [
+        'https://images.unsplash.com/photo-1610945415295-d9bbf067e59c?q=80&w=2671&auto=format&fit=crop'
+      ],
+      summary: 'Samsung officially unveiled the Galaxy S26 Ultra featuring Proactive AI that anticipates daily workflows before you even touch the screen.',
+      paragraphs: [
+        'Samsung has officially unveiled the highly anticipated Galaxy S26 series, promising a massive leap forward in both AI integration and physical durability. With the new "Titanium Armor" chassis, the S26 is built to survive the harshest conditions while remaining incredibly lightweight.',
+        'According to Samsung\'s keynote, the true focus this year is on Proactive AI. The device actively manages battery optimization based on your schedule, pre-loads apps before you even swipe, and features a completely revamped camera matrix that utilizes neural processing to balance exposure in real-time.'
+      ],
+      keyUpgrades: [
+        'Snapdragon 8 Gen 5 (Custom for Galaxy)',
+        'New 200MP ISOCELL sensor with 0 delay shutter',
+        '144Hz Dynamic AMOLED display that peaks at 3200 nits',
+        '7 years of guaranteed OS and security updates'
+      ],
+      specs: {
+        'Processor': 'Snapdragon 8 Gen 5 Extreme Edition',
+        'Screen': '6.8-inch Dynamic AMOLED 2X 144Hz',
+        'Battery': '5,500 mAh with 65W HyperCharge'
+      },
+      ctaText: 'Explore Collection',
+      ctaLink: '/#product-grid',
+      featured: false
+    }
+  ]
+};
+
+// 2. GET GLOBAL SETTINGS (WITH SERVER-SIDE CACHING)
 app.get('/api/settings', catalogLimiter, async (req, res) => {
   const now = Date.now();
   if (cachedSettingsList && now < cachedSettingsExpiry) {
-    return res.json(cachedSettingsList);
+    const payload = {
+      ...cachedSettingsList,
+      launchSettings: cachedSettingsList.launchSettings || DEFAULT_LAUNCH_SETTINGS,
+      techOfTheDay: cachedSettingsList.techOfTheDay || DEFAULT_TECH_OF_THE_DAY
+    };
+    return res.json(payload);
   }
 
   console.log('>>> FETCHING SETTINGS (CACHE MISS)');
@@ -1160,13 +1249,99 @@ app.get('/api/settings', catalogLimiter, async (req, res) => {
         const s = settingsSnap.data();
         cachedSettingsList = s;
         cachedSettingsExpiry = now + CACHE_TTL_MS;
-        return res.json(s);
+        return res.json({
+          ...s,
+          launchSettings: s.launchSettings || DEFAULT_LAUNCH_SETTINGS,
+          techOfTheDay: s.techOfTheDay || DEFAULT_TECH_OF_THE_DAY
+        });
       }
     } catch (err: any) {
       console.log('Error fetching global settings from Firestore:', err.message);
     }
   }
-  return res.json({});
+  return res.json({ 
+    launchSettings: DEFAULT_LAUNCH_SETTINGS,
+    techOfTheDay: DEFAULT_TECH_OF_THE_DAY
+  });
+});
+
+// Dedicated Public Tech of the Day endpoint
+app.get('/api/tech-of-the-day', catalogLimiter, async (req, res) => {
+  const db = getFirebaseDb();
+  if (cachedSettingsList?.techOfTheDay) {
+    return res.json({ success: true, techOfTheDay: cachedSettingsList.techOfTheDay });
+  }
+  if (db) {
+    try {
+      const snap = await getDoc(doc(db, 'settings', 'global'));
+      if (snap.exists() && snap.data().techOfTheDay) {
+        const tod = snap.data().techOfTheDay;
+        cachedSettingsList = { ...(cachedSettingsList || {}), techOfTheDay: tod };
+        return res.json({ success: true, techOfTheDay: tod });
+      }
+    } catch (e: any) {
+      console.warn('Error fetching tech of the day from Firestore:', e.message);
+    }
+  }
+  return res.json({ success: true, techOfTheDay: DEFAULT_TECH_OF_THE_DAY });
+});
+
+// Update Tech of the Day from Admin Dashboard
+app.post('/api/admin/tech-of-the-day', async (req, res) => {
+  try {
+    const { techOfTheDay } = req.body;
+    if (!techOfTheDay || !Array.isArray(techOfTheDay.articles)) {
+      return res.status(400).json({ error: 'Valid techOfTheDay object with articles array is required' });
+    }
+
+    const payload = {
+      ...techOfTheDay,
+      lastUpdated: new Date().toISOString()
+    };
+
+    const db = getFirebaseDb();
+    if (db) {
+      try {
+        await setDoc(doc(db, 'settings', 'global'), { techOfTheDay: payload }, { merge: true });
+      } catch (dbErr: any) {
+        console.warn('Firestore write warning in /api/admin/tech-of-the-day:', dbErr.message);
+      }
+    }
+
+    cachedSettingsList = { ...(cachedSettingsList || {}), techOfTheDay: payload };
+    cachedSettingsExpiry = Date.now() + CACHE_TTL_MS;
+
+    await logServerAuditActivity(req, 'TECH_OF_THE_DAY_UPDATE', `Updated Tech of the Day with ${payload.articles.length} articles`);
+    return res.json({ success: true, techOfTheDay: payload });
+  } catch (err: any) {
+    console.error('Error updating Tech of the Day:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Update Pre-Launch Countdown & Drop Status from Admin
+app.post('/api/admin/launch-settings', verifyAdminToken, async (req, res) => {
+  try {
+    const { launchSettings } = req.body;
+    if (!launchSettings) {
+      return res.status(400).json({ error: 'launchSettings is required' });
+    }
+    const db = getFirebaseDb();
+    if (db) {
+      try {
+        await setDoc(doc(db, 'settings', 'global'), { launchSettings }, { merge: true });
+      } catch (dbErr: any) {
+        console.warn('Firestore write error in /api/admin/launch-settings:', dbErr.message);
+      }
+    }
+    // Update server-side cache immediately so storefront fetches reflect changes instantly
+    cachedSettingsList = { ...(cachedSettingsList || {}), launchSettings };
+    cachedSettingsExpiry = Date.now() + CACHE_TTL_MS;
+    return res.json({ success: true, launchSettings });
+  } catch (err: any) {
+    console.error('Error updating launch settings:', err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Update Hero Config & Delivery Ticker from Admin
@@ -4448,6 +4623,252 @@ app.use(async (err: any, req: express.Request, res: express.Response, next: expr
   });
 });
 
+function escapeHtml(str: string): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+async function findProductForSeo(id: string): Promise<any | null> {
+  if (!id) return null;
+  // 1. In-memory cached products
+  if (Array.isArray(cachedProductsList)) {
+    const p = cachedProductsList.find((item: any) => item && item.id === id);
+    if (p) return p;
+  }
+  // 2. Fallback in-memory list
+  if (Array.isArray(fallbackProducts)) {
+    const p = fallbackProducts.find((item: any) => item && item.id === id);
+    if (p) return p;
+  }
+  // 3. Firestore look-up if available
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      const snap = await getDoc(doc(db, 'products', id));
+      if (snap.exists()) {
+        return snap.data();
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+  // 4. Initial static array
+  return initialProducts.find((item: any) => item && item.id === id) || null;
+}
+
+function renderHtmlWithProductSeo(html: string, product: any, req: express.Request): string {
+  const host = req.get('host') || 'localhost:3000';
+  const protocol = req.protocol || 'http';
+  const baseUrl = process.env.APP_URL || `${protocol}://${host}`;
+  const canonicalUrl = `${baseUrl}/package/${product.id}`;
+
+  const pageTitle = `${product.name} - Buy in Lagos, Nigeria | Tizzitech`;
+  const metaDesc = `Buy ${product.name} (${product.condition || 'Brand New'}) for ₦${Number(product.price || 0).toLocaleString()} in Lagos, Nigeria. Fast delivery to Ikeja, Lekki, Victoria Island, Yaba & nationwide with warranty. Tizzitech - The Brand Behind The Gear.`;
+
+  const rawImage = product.imageUrl || (Array.isArray(product.images) && product.images[0]) || '/logo.svg';
+  const fullImageUrl = rawImage.startsWith('http') ? rawImage : `${baseUrl}${rawImage.startsWith('/') ? '' : '/'}${rawImage}`;
+
+  const images = (Array.isArray(product.images) && product.images.length > 0)
+    ? product.images
+    : [fullImageUrl];
+
+  const fullImages = images.map((img: string) => img.startsWith('http') ? img : `${baseUrl}${img.startsWith('/') ? '' : '/'}${img}`);
+
+  const hasReviews = Array.isArray(product.reviews) && product.reviews.length > 0;
+  const avgRating = hasReviews
+    ? Number((product.reviews.reduce((acc: number, r: any) => acc + (Number(r.rating) || 5), 0) / product.reviews.length).toFixed(1))
+    : 5;
+
+  const structuredData = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Product",
+        "@id": `${canonicalUrl}#product`,
+        "name": product.name,
+        "image": fullImages,
+        "description": product.description || metaDesc,
+        "sku": product.id,
+        "mpn": product.id,
+        "brand": {
+          "@type": "Brand",
+          "name": product.brand || "Tizzitech"
+        },
+        "category": product.category || "Tech",
+        "itemCondition": product.condition?.toLowerCase() === 'new' 
+          ? "https://schema.org/NewCondition" 
+          : "https://schema.org/UsedCondition",
+        "offers": {
+          "@type": "Offer",
+          "url": canonicalUrl,
+          "priceCurrency": "NGN",
+          "price": product.price,
+          "priceValidUntil": "2027-12-31",
+          "itemCondition": product.condition?.toLowerCase() === 'new' 
+            ? "https://schema.org/NewCondition" 
+            : "https://schema.org/UsedCondition",
+          "availability": (product.stock > 0) 
+            ? "https://schema.org/InStock" 
+            : "https://schema.org/OutOfStock",
+          "seller": {
+            "@type": "LocalBusiness",
+            "name": "Tizzitech",
+            "image": `${baseUrl}/logo.svg`,
+            "telephone": "+2348000000000",
+            "priceRange": "₦₦₦",
+            "address": {
+              "@type": "PostalAddress",
+              "streetAddress": "Computer Village / Ikeja Tech Hub",
+              "addressLocality": "Ikeja",
+              "addressRegion": "Lagos State",
+              "postalCode": "100001",
+              "addressCountry": "NG"
+            },
+            "geo": {
+              "@type": "GeoCoordinates",
+              "latitude": 6.5965,
+              "longitude": 3.3421
+            },
+            "areaServed": [
+              { "@type": "AdministrativeArea", "name": "Lagos State" },
+              { "@type": "City", "name": "Ikeja" },
+              { "@type": "City", "name": "Lekki" },
+              { "@type": "City", "name": "Victoria Island" },
+              { "@type": "City", "name": "Yaba" },
+              { "@type": "City", "name": "Surulere" },
+              { "@type": "City", "name": "Alimosho" },
+              { "@type": "Country", "name": "Nigeria" }
+            ]
+          },
+          "shippingDetails": {
+            "@type": "OfferShippingDetails",
+            "shippingRate": {
+              "@type": "MonetaryAmount",
+              "value": 2500,
+              "currency": "NGN"
+            },
+            "shippingDestination": {
+              "@type": "DefinedRegion",
+              "addressCountry": "NG",
+              "addressRegion": "Lagos"
+            },
+            "deliveryTime": {
+              "@type": "ShippingDeliveryTime",
+              "handlingTime": {
+                "@type": "QuantitativeValue",
+                "minValue": 0,
+                "maxValue": 1,
+                "unitCode": "d"
+              },
+              "transitTime": {
+                "@type": "QuantitativeValue",
+                "minValue": 1,
+                "maxValue": 2,
+                "unitCode": "d"
+              }
+            }
+          }
+        },
+        ...(hasReviews ? {
+          "aggregateRating": {
+            "@type": "AggregateRating",
+            "ratingValue": avgRating,
+            "reviewCount": product.reviews.length,
+            "bestRating": 5,
+            "worstRating": 1
+          },
+          "review": product.reviews.map((r: any) => ({
+            "@type": "Review",
+            "author": {
+              "@type": "Person",
+              "name": r.author || "Tech Enthusiast"
+            },
+            "datePublished": r.date || "2026-05-01",
+            "reviewBody": r.comment || "Great tech device.",
+            "reviewRating": {
+              "@type": "Rating",
+              "ratingValue": Number(r.rating) || 5,
+              "bestRating": 5,
+              "worstRating": 1
+            }
+          }))
+        } : {})
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "Home",
+            "item": baseUrl
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": product.category || "Gear",
+            "item": `${baseUrl}/?category=${encodeURIComponent(product.category || '')}`
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": product.name,
+            "item": canonicalUrl
+          }
+        ]
+      }
+    ]
+  };
+
+  let output = html;
+  output = output.replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtml(pageTitle)}</title>`);
+  output = output.replace(/<meta\s+name=["']description["'][\s\S]*?>/i, `<meta name="description" content="${escapeHtml(metaDesc)}" />`);
+  output = output.replace(/<meta\s+property=["']og:title["'][\s\S]*?>/i, `<meta property="og:title" content="${escapeHtml(pageTitle)}" />`);
+  output = output.replace(/<meta\s+property=["']og:description["'][\s\S]*?>/i, `<meta property="og:description" content="${escapeHtml(metaDesc)}" />`);
+  output = output.replace(/<meta\s+property=["']og:image["'][\s\S]*?>/i, `<meta property="og:image" content="${escapeHtml(fullImageUrl)}" />`);
+
+  const additionalTags = `
+    <!-- Specific OpenGraph & Social Sharing Meta Tags for Lagos Customers -->
+    <meta property="og:type" content="product" />
+    <meta property="og:url" content="${escapeHtml(canonicalUrl)}" />
+    <meta property="og:site_name" content="Tizzitech Lagos" />
+    <meta property="og:locale" content="en_NG" />
+    <meta property="product:price:amount" content="${escapeHtml(String(product.price))}" />
+    <meta property="product:price:currency" content="NGN" />
+    <meta property="product:availability" content="${product.stock > 0 ? 'in stock' : 'out of stock'}" />
+    <meta property="product:condition" content="${product.condition?.toLowerCase() === 'new' ? 'new' : 'used'}" />
+    <meta property="product:brand" content="${escapeHtml(product.brand || 'Tizzitech')}" />
+    <meta property="product:category" content="${escapeHtml(product.category || 'Tech')}" />
+    <meta property="product:retailer_item_id" content="${escapeHtml(product.id)}" />
+
+    <!-- Twitter / X Card Tags -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${escapeHtml(product.name)} | Tizzitech Lagos" />
+    <meta name="twitter:description" content="${escapeHtml(metaDesc)}" />
+    <meta name="twitter:image" content="${escapeHtml(fullImageUrl)}" />
+
+    <!-- Local SEO Geo Tags for Lagos, Nigeria -->
+    <meta name="geo.region" content="NG-LA" />
+    <meta name="geo.placename" content="Lagos, Nigeria" />
+    <meta name="geo.position" content="6.5244;3.3792" />
+    <meta name="ICBM" content="6.5244, 3.3792" />
+    <link rel="canonical" href="${escapeHtml(canonicalUrl)}" />
+
+    <!-- Schema.org JSON-LD Structured Data for Product & Lagos LocalBusiness -->
+    <script id="product-structured-data" type="application/ld+json">
+${JSON.stringify(structuredData, null, 2)}
+    </script>
+  `;
+
+  output = output.replace('</head>', `${additionalTags}\n  </head>`);
+  return output;
+}
+
 async function boot() {
   app.get('/admin', (req, res) => {
     res.redirect('/admin.html');
@@ -4459,17 +4880,70 @@ async function boot() {
       server: { middlewareMode: true },
       appType: 'spa',
     });
+
+    // Handle package/product pages with SSR meta tags & Schema.org JSON-LD before Vite SPA middleware
+    app.get(['/package/:id', '/product/:id'], async (req, res, next) => {
+      try {
+        const productId = req.params.id;
+        const product = await findProductForSeo(productId);
+        const indexPath = path.join(process.cwd(), 'index.html');
+        if (!fs.existsSync(indexPath)) return next();
+
+        let html = fs.readFileSync(indexPath, 'utf-8');
+        if (product) {
+          html = renderHtmlWithProductSeo(html, product, req);
+        }
+        html = await vite.transformIndexHtml(req.originalUrl || req.url, html);
+        return res.status(200).set({ 'Content-Type': 'text/html' }).send(html);
+      } catch (err) {
+        next(err);
+      }
+    });
+
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath, { index: false }));
 
-    app.get('*', (req, res) => {
-      if (req.path.startsWith('/admin')) {
-         res.sendFile(path.join(distPath, 'admin.html'));
-      } else {
-         res.sendFile(path.join(distPath, 'index.html'));
+    // Production package/product SEO route
+    app.get(['/package/:id', '/product/:id'], async (req, res, next) => {
+      try {
+        const productId = req.params.id;
+        const product = await findProductForSeo(productId);
+        const indexPath = path.join(distPath, 'index.html');
+        if (!fs.existsSync(indexPath)) return next();
+
+        let html = fs.readFileSync(indexPath, 'utf-8');
+        if (product) {
+          html = renderHtmlWithProductSeo(html, product, req);
+        }
+        return res.status(200).set({ 'Content-Type': 'text/html' }).send(html);
+      } catch (err) {
+        next(err);
       }
+    });
+
+    app.get('*', async (req, res, next) => {
+      if (req.path.startsWith('/admin')) {
+        return res.sendFile(path.join(distPath, 'admin.html'));
+      }
+      
+      const pkgQuery = (req.query.package as string) || (req.query.product as string);
+      if (pkgQuery) {
+        try {
+          const product = await findProductForSeo(pkgQuery);
+          const indexPath = path.join(distPath, 'index.html');
+          if (product && fs.existsSync(indexPath)) {
+            let html = fs.readFileSync(indexPath, 'utf-8');
+            html = renderHtmlWithProductSeo(html, product, req);
+            return res.status(200).set({ 'Content-Type': 'text/html' }).send(html);
+          }
+        } catch (e) {
+          // ignore error and fallback to regular index.html
+        }
+      }
+
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 

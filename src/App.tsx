@@ -27,7 +27,7 @@ import { HeroSlider } from "./components/HeroSlider";
 import { useAuth } from "./contexts/AuthContext";
 import { useToast } from "./contexts/ToastContext";
 import { initialProducts, CATEGORIES as FALLBACK_CATEGORIES, BRANDS as FALLBACK_BRANDS, defaultHeroConfig } from "./data";
-import { Category, Condition, CartItem, Product, Order, HeroConfig } from "./types";
+import { Category, Condition, CartItem, Product, Order, HeroConfig, LaunchSettings, TechOfTheDayConfig } from "./types";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -169,6 +169,16 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [resetToken, setResetToken] = useState<string | null>(null);
   const [verifyToken, setVerifyToken] = useState<string | null>(null);
+  const [launchSettings, setLaunchSettings] = useState<LaunchSettings | undefined>(undefined);
+  const [techOfTheDayConfig, setTechOfTheDayConfig] = useState<TechOfTheDayConfig | undefined>(() => {
+    const saved = localStorage.getItem('tizzitech_tech_of_the_day');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return undefined;
+  });
 
   useEffect(() => {
     const visitorId = localStorage.getItem('tizzitech_visitor_id') || `v_${Math.random().toString(36).substring(2,15)}`;
@@ -213,9 +223,46 @@ export default function App() {
 
     logVisit();
   }, [user]);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [pendingCheckout, setPendingCheckout] = useState(false);
+
+  // Helper to transition to product details with SEO friendly canonical path
+  const handleOpenProduct = (p: Product) => {
+    setSelectedProduct(p);
+    setView("product-details");
+    try {
+      window.history.pushState({ productId: p.id }, '', `/package/${p.id}`);
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleBackFromProduct = () => {
+    setSelectedProduct(null);
+    setView("store");
+    try {
+      window.history.pushState({}, '', '/');
+    } catch {
+      // fallback
+    }
+  };
+
   useEffect(() => {
-    // Parse URL for params like reset-password, verify-email and tracking
+    // Parse URL path and query for packages/products or direct views
+    const pathname = window.location.pathname;
+    const pathMatch = pathname.match(/^\/(?:package|product)\/([^/?#]+)/i);
     const params = new URLSearchParams(window.location.search);
+    const pkgQuery = params.get('package') || params.get('product') || (params.get('view') === 'product-details' ? params.get('id') : null);
+    const targetId = pathMatch ? pathMatch[1] : pkgQuery;
+
+    if (targetId) {
+      const match = initialProducts.find(p => p.id === targetId);
+      if (match) {
+        setSelectedProduct(match);
+        setView('product-details');
+      }
+    }
+
     const viewParam = params.get('view');
     const tokenParam = params.get('token');
     const orderIdParam = params.get('orderId');
@@ -236,8 +283,43 @@ export default function App() {
       setView('launch');
     }
   }, []);
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [pendingCheckout, setPendingCheckout] = useState(false);
+
+  // Listen for browser Back/Forward (popstate) navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      const pathname = window.location.pathname;
+      const pathMatch = pathname.match(/^\/(?:package|product)\/([^/?#]+)/i);
+      const params = new URLSearchParams(window.location.search);
+      const targetId = pathMatch ? pathMatch[1] : (params.get('package') || params.get('product'));
+
+      if (targetId) {
+        const found = products.find(p => p.id === targetId) || initialProducts.find(p => p.id === targetId);
+        if (found) {
+          setSelectedProduct(found);
+          setView('product-details');
+          return;
+        }
+      }
+
+      if (pathname === '/' || pathname === '') {
+        setSelectedProduct(null);
+        setView('store');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [products]);
+
+  // Keep selected product synchronized with updated backend data (e.g. stock or latest reviews)
+  useEffect(() => {
+    if (selectedProduct) {
+      const fresh = products.find(p => p.id === selectedProduct.id);
+      if (fresh && fresh !== selectedProduct) {
+        setSelectedProduct(fresh);
+      }
+    }
+  }, [products]);
 
   useEffect(() => {
     // Fetch products and settings from cached backend endpoints to reduce Firestore reads and scale seamlessly
@@ -251,6 +333,11 @@ export default function App() {
           if (s.brands) setBrandsList(s.brands);
           if (s.categories) setCategoriesList(s.categories);
           if (s.deliveryZones) setDeliveryZones(s.deliveryZones);
+          if (s.launchSettings) setLaunchSettings(s.launchSettings);
+          if (s.techOfTheDay) {
+            setTechOfTheDayConfig(s.techOfTheDay);
+            localStorage.setItem('tizzitech_tech_of_the_day', JSON.stringify(s.techOfTheDay));
+          }
           if (s.heroConfig) {
             setHeroConfig(s.heroConfig);
             localStorage.setItem('tizzitech_hero_config', JSON.stringify(s.heroConfig));
@@ -728,9 +815,16 @@ export default function App() {
 
       <main className="flex-1 w-full max-w-[100vw] bg-black relative overflow-x-clip">
         {view === "launch" ? (
-          <ProductLaunchWaitlist onGoToStore={() => setView("store")} />
+          <ProductLaunchWaitlist onGoToStore={() => setView("store")} launchSettings={launchSettings} />
         ) : view === "techoftheday" ? (
-          <TechOfTheDay />
+          <TechOfTheDay 
+            config={techOfTheDayConfig}
+            onGoToStore={() => {
+              setView("store");
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+            onGoToLaunch={() => setView("launch")}
+          />
         ) : view === "privacy" ? (
           <PrivacyPolicy />
         ) : view === "terms" ? (
@@ -757,7 +851,7 @@ export default function App() {
           <ProductDetails
             product={selectedProduct}
             onAddToCart={addToCart}
-            onGoBack={() => setView("store")}
+            onGoBack={handleBackFromProduct}
             products={products}
             setProducts={setProducts}
             onRequireAuth={() => setIsAuthOpen(true)}
@@ -989,10 +1083,7 @@ export default function App() {
                             <ProductCard
                               product={product}
                               onAddToCart={addToCart}
-                              onViewProduct={(p) => {
-                                setSelectedProduct(p);
-                                setView("product-details");
-                              }}
+                              onViewProduct={handleOpenProduct}
                               isWishlisted={wishlist.includes(product.id)}
                               onToggleWishlist={handleToggleWishlist}
                             />
