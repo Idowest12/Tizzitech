@@ -4,7 +4,12 @@ service cloud.firestore {
     
     // Helper to check if the user is an authenticated super administrator
     function isSuperAdmin() {
-      return request.auth != null && (request.auth.token.email == 'idowutosin70@gmail.com' || request.auth.token.email == 'server-admin@tizzitech.com');
+      return request.auth != null && (
+        request.auth.token.email == 'idowutosin70@gmail.com' || 
+        request.auth.token.email == 'server-admin@tizzitech.com' ||
+        request.auth.token.role == 'admin' ||
+        request.auth.token.role == 'super_admin'
+      );
     }
 
     // Helper to check if the user is authenticated and owns the resource

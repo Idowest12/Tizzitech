@@ -1,4 +1,5 @@
 import fs from 'fs';
+import crypto from 'crypto';
 import express from 'express';
 import path from 'path';
 import mysql from 'mysql2/promise';
@@ -193,9 +194,31 @@ cloudinary.config({
 // Configure Multer for in-memory uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
-const JWT_SECRET = process.env.JWT_SECRET || process.env.JWT_SECRETS || 'tizzitech-super-secret-key';
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Ephemeral runtime key fallback in production if not explicitly set in environment
+let JWT_SECRET = process.env.JWT_SECRET || process.env.JWT_SECRETS || '';
 if (!JWT_SECRET) {
-  console.error('CRITICAL WARNING: JWT_SECRET is not set in environment variables. Auth will fail.');
+  if (isProduction) {
+    console.warn('⚠️ [SECURITY NOTICE]: JWT_SECRET is not defined in environment variables. Generating an ephemeral 256-bit cryptographically secure secret for this process runtime. Set JWT_SECRET in environment to ensure token validity persists across container restarts.');
+    JWT_SECRET = crypto.randomBytes(32).toString('hex');
+  } else {
+    JWT_SECRET = 'tizzitech-dev-jwt-secret-key-do-not-use-in-production';
+  }
+}
+
+// Configurable Admin Email with dynamic authorization support
+export const PRIMARY_ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'idowutosin70@gmail.com').toLowerCase().trim();
+
+export function isAuthorizedAdminEmail(email?: string | null): boolean {
+  if (!email || typeof email !== 'string') return false;
+  const normalized = email.toLowerCase().trim();
+  if (normalized === PRIMARY_ADMIN_EMAIL) return true;
+  if (process.env.ADDITIONAL_ADMIN_EMAILS) {
+    const list = process.env.ADDITIONAL_ADMIN_EMAILS.split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+    if (list.includes(normalized)) return true;
+  }
+  return false;
 }
 
 // Prevent Firebase unhandled stream rejections from crashing the process
@@ -712,8 +735,6 @@ let fallbackOrders: any[] = [];
 
 let fallbackUsers: any[] = [];
 
-import crypto from 'crypto';
-
 function getDocId(email: string) {
   const secret = process.env.ADMIN_KEY || 'default_secret';
   return crypto.createHmac('sha256', secret).update(email).digest('hex');
@@ -940,7 +961,7 @@ const verifyAdminToken = async (req: express.Request, res: express.Response, nex
   // Allow mock token for development preview mode if not in production
   if (process.env.NODE_ENV !== 'production' && token === 'mock-admin-token-for-preview') {
     (req as any).admin = {
-      email: 'idowutosin70@gmail.com', // use actual admin email for realistic audits
+      email: PRIMARY_ADMIN_EMAIL, // use actual admin email for realistic audits
       id: 'mock-admin-id'
     };
     return next();
@@ -954,8 +975,11 @@ const verifyAdminToken = async (req: express.Request, res: express.Response, nex
     let decoded: any;
     try {
       decoded = jwt.verify(token, JWT_SECRET) as any;
-      if (!decoded || !decoded.email) {
+      if (!decoded || (!decoded.email && decoded.role !== 'admin')) {
         throw new Error('Invalid custom JWT structure');
+      }
+      if (!decoded.email && decoded.role === 'admin') {
+        decoded.email = PRIMARY_ADMIN_EMAIL;
       }
     } catch (err) {
       // Try decoding as a Firebase/Google ID Token
@@ -966,14 +990,14 @@ const verifyAdminToken = async (req: express.Request, res: express.Response, nex
           const email = decodedToken.email;
           const dId = getDocId(email);
           const adminSnap = await getDoc(doc(db, 'admins', dId));
-          if (!adminSnap.exists()) {
+          if (!adminSnap.exists() && !isAuthorizedAdminEmail(email)) {
             return res.status(403).json({ error: 'Forbidden: Admin access required.' });
           }
           
           // Also check session validity from admin_sessions
           const sessionDocId = getDocId(email + "_session");
           const sessionSnap = await getDoc(doc(db, 'admin_sessions', sessionDocId));
-          if (!sessionSnap.exists()) {
+          if (!sessionSnap.exists() && !isAuthorizedAdminEmail(email)) {
             return res.status(401).json({ error: 'Invalid or expired administrative session.' });
           }
           
@@ -982,8 +1006,8 @@ const verifyAdminToken = async (req: express.Request, res: express.Response, nex
             userId: decodedToken.sub || 'admin-id'
           };
         } else {
-          // If Firestore is not initialized but email is correct, allow fallback
-          if (decodedToken.email === 'idowutosin70@gmail.com') {
+          // If Firestore is not initialized but email is authorized, allow fallback
+          if (isAuthorizedAdminEmail(decodedToken.email)) {
             decoded = {
               email: decodedToken.email,
               userId: decodedToken.sub || 'admin-id'
@@ -997,8 +1021,24 @@ const verifyAdminToken = async (req: express.Request, res: express.Response, nex
       }
     }
     
-    // Check if it's the admin email
-    if (decoded.email !== 'idowutosin70@gmail.com') {
+    // Check if it's an authorized admin email or verified in database
+    let isAuthorized = isAuthorizedAdminEmail(decoded.email);
+    if (!isAuthorized) {
+      const db = getFirebaseDb();
+      if (db) {
+        try {
+          const dId = getDocId(decoded.email);
+          const adminSnap = await getDoc(doc(db, 'admins', dId));
+          if (adminSnap.exists()) {
+            isAuthorized = true;
+          }
+        } catch (e) {
+          // ignore error
+        }
+      }
+    }
+
+    if (!isAuthorized) {
       logSecurityEvent(req, 'ADMIN_ACCESS_DENIED', 'HIGH', `Unauthorized admin access attempt by ${decoded.email}`, decoded.email);
       return res.status(403).json({ error: 'Forbidden: Admin access required.' });
     }
@@ -1800,7 +1840,7 @@ app.post('/api/orders', orderLimiter, honeypotBotDetector, async (req, res) => {
                  </div>
                </div>
              `;
-             sendEmail('idowutosin70@gmail.com', lowStockSubject, lowStockHtml)
+             sendEmail(PRIMARY_ADMIN_EMAIL, lowStockSubject, lowStockHtml)
                .catch(err => console.error("Low stock email dispatch failed:", err));
            }
         }
@@ -2405,17 +2445,33 @@ app.patch('/api/admin/products/batch-stock', verifyAdminToken, async (req, res) 
 // 7. ADMIN: AUTHENTICATE SYSTEM ACCESS
 app.post('/api/admin/authenticate', authLimiter, (req, res) => {
   const { key } = req.body;
-  const systemKey = process.env.ADMIN_KEY || 'admin123';
+  const configuredKey = process.env.ADMIN_KEY;
   
+  // Guard against default insecure passkeys in production
+  if (isProduction && (!configuredKey || configuredKey === 'admin123')) {
+    logSecurityEvent(req, 'ADMIN_PASSKEY_INSECURE', 'CRITICAL', 'Passkey authentication attempt rejected: ADMIN_KEY must be set to a secure custom value in production.');
+    return res.status(503).json({ 
+      success: false, 
+      message: 'Passkey login is disabled in production until a secure ADMIN_KEY is configured in server environment variables.' 
+    });
+  }
+
+  const effectiveKey = configuredKey || (!isProduction ? 'admin123' : null);
+  if (!effectiveKey) {
+    return res.status(503).json({ success: false, message: 'Administrator passkey is not configured.' });
+  }
+
   if (!JWT_SECRET) {
     console.error('CRITICAL: JWT_SECRET is not set.');
     return res.status(500).json({ success: false, message: 'Server configuration error.' });
   }
 
-  if (key === systemKey) {
-    const token = jwt.sign({ role: 'admin' }, JWT_SECRET, { expiresIn: '12h' });
+  if (key === effectiveKey) {
+    const token = jwt.sign({ role: 'admin', email: PRIMARY_ADMIN_EMAIL }, JWT_SECRET, { expiresIn: '12h' });
+    logSecurityEvent(req, 'ADMIN_PASSKEY_SUCCESS', 'INFO', `Admin passkey authentication successful for ${PRIMARY_ADMIN_EMAIL}`);
     return res.json({ success: true, token });
   }
+  logSecurityEvent(req, 'ADMIN_PASSKEY_FAILED', 'WARN', 'Failed administrator passkey attempt');
   return res.status(401).json({ success: false, message: 'Incorrect Administrator Passkey.' });
 });
 
@@ -2508,7 +2564,7 @@ app.post("/api/admin/force-seed", verifyAdminToken, async (req, res) => {
   try {
     const productsToSeed = fallbackProducts.map(({ id, name, brand, category, price, condition, specs, description, stock, imageUrl }) => ({ id, name, brand, category, price, condition, specs, description: description || "", stock, imageUrl }));
     await Promise.all(productsToSeed.map((p: any) => setDoc(doc(db, "products", p.id), p)));
-    await logServerAuditActivity(req, 'DATABASE_SEED', `Force seeded ${productsToSeed.length} products to Firestore`, 'idowutosin70@gmail.com');
+    await logServerAuditActivity(req, 'DATABASE_SEED', `Force seeded ${productsToSeed.length} products to Firestore`, PRIMARY_ADMIN_EMAIL);
     return res.json({ success: true, message: "Seeded" });
   } catch (err: any) {
     return res.status(500).json({ success: false, message: err.message });
@@ -4265,8 +4321,8 @@ app.post('/api/admin/send-otp', async (req, res) => {
     let adminSnap = await getDoc(doc(fbDb, 'admins', dId));
     
     // Auto-create/seed the super administrator if no administrator exists yet
-    if (!adminSnap.exists() && email === 'idowutosin70@gmail.com') {
-      await setDoc(doc(fbDb, 'admins', dId), { email, addedAt: new Date().toISOString() });
+    if (!adminSnap.exists() && isAuthorizedAdminEmail(email)) {
+      await setDoc(doc(fbDb, 'admins', dId), { email, role: 'super_admin', addedAt: new Date().toISOString() });
       adminSnap = await getDoc(doc(fbDb, 'admins', dId));
     }
 
@@ -4303,9 +4359,16 @@ app.post('/api/admin/send-otp', async (req, res) => {
     await sendEmail(email, subject, html);
     await logSecurityEvent(req, 'ADMIN_OTP_REQUESTED', 'INFO', `Admin OTP generated and sent to ${email}`, email);
     if (!process.env.SMTP_HOST || !process.env.SMTP_USER) {
-       res.json({ success: true, message: 'OTP simulated (SMTP not configured)', devOtp: otp });
+      if (isProduction) {
+        console.error('CRITICAL: Admin OTP requested but SMTP is not configured in production.');
+        return res.status(503).json({ 
+          success: false, 
+          message: 'Mail service unavailable. Please configure SMTP credentials (SMTP_HOST, SMTP_USER, SMTP_PASS) on the production server.' 
+        });
+      }
+      return res.json({ success: true, message: 'OTP simulated (SMTP not configured - Dev Preview Mode)', devOtp: otp });
     } else {
-       res.json({ success: true, message: 'OTP sent successfully' });
+      return res.json({ success: true, message: 'OTP sent successfully to your administrator inbox.' });
     }
   } catch (err: any) {
     res.status(500).json({ success: false, message: 'Failed to send OTP email: ' + err.message });
@@ -4320,8 +4383,8 @@ app.post('/api/admin/verify-otp', async (req, res) => {
   const dId = getDocId(email);
   try {
     let adminSnap = await getDoc(doc(fbDb, 'admins', dId));
-    if (!adminSnap.exists() && email === 'idowutosin70@gmail.com') {
-      await setDoc(doc(fbDb, 'admins', dId), { email, addedAt: new Date().toISOString() });
+    if (!adminSnap.exists() && isAuthorizedAdminEmail(email)) {
+      await setDoc(doc(fbDb, 'admins', dId), { email, role: 'super_admin', addedAt: new Date().toISOString() });
       adminSnap = await getDoc(doc(fbDb, 'admins', dId));
     }
     if (!adminSnap.exists()) {
@@ -4487,7 +4550,7 @@ app.post('/api/contact', contactLimiter, honeypotBotDetector, async (req, res) =
     </div>
   `;
   const notifHtml = getPremiumTemplateHtml(notifSubject, notifContent, getBaseUrl(req));
-  sendEmail('idowutosin70@gmail.com', notifSubject, notifHtml).catch(err => console.error("Contact email dispatch failed:", err));
+  sendEmail(PRIMARY_ADMIN_EMAIL, notifSubject, notifHtml).catch(err => console.error("Contact email dispatch failed:", err));
 
   await logSecurityEvent(req, 'CONTACT_FORM_SUBMITTED', 'INFO', `Inquiry received from ${cleanEmail}`, cleanEmail);
 
