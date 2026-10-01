@@ -132,6 +132,7 @@ export function AdminDashboard({
   const [orderDateRange, setOrderDateRange] = useState<DateRangePreset>('all');
   const [orderStartDate, setOrderStartDate] = useState<string>('');
   const [orderEndDate, setOrderEndDate] = useState<string>('');
+  const [invoiceSearch, setInvoiceSearch] = useState<string>('');
 
   // Audit Logs Filter state
   const [auditDateRange, setAuditDateRange] = useState<DateRangePreset>('all');
@@ -3567,52 +3568,155 @@ export function AdminDashboard({
           )}
 
           {/* INVOICES TAB */}
-          {activeTab === 'invoices' && (
-            <div className="animate-in fade-in space-y-6">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h1 className="text-2xl font-bold text-white">Invoices</h1>
-                  <p className="text-neutral-400 text-sm mt-1">Manage and track billing invoices.</p>
+          {activeTab === 'invoices' && (() => {
+            const cleanSearch = invoiceSearch.toLowerCase().trim();
+            const invoiceList = orders.filter((order) => {
+              if (!cleanSearch) return true;
+              const matchesId = (order.id || '').toLowerCase().includes(cleanSearch);
+              const matchesName = (order.fullname || '').toLowerCase().includes(cleanSearch);
+              const matchesEmail = (order.email || '').toLowerCase().includes(cleanSearch);
+              const matchesItem = (order.items || []).some((item: any) => 
+                (item.name || '').toLowerCase().includes(cleanSearch) || 
+                (item.id || '').toLowerCase().includes(cleanSearch)
+              );
+              return matchesId || matchesName || matchesEmail || matchesItem;
+            });
+
+            return (
+              <div className="animate-in fade-in space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+                      <span>Invoices & Billing</span>
+                      <span className="text-xs bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2.5 py-0.5 rounded-full font-mono">
+                        {invoiceList.length} Total
+                      </span>
+                    </h1>
+                    <p className="text-neutral-400 text-sm mt-1">Review, search, and generate official customer billing receipts.</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm tracking-wide transition-colors shadow-lg shadow-blue-600/20 flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      <span>Print Invoices List</span>
+                    </button>
+                  </div>
                 </div>
-                <button onClick={() => window.print()} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm tracking-wide transition-colors">
-                  Print Invoices List
-                </button>
+
+                {/* Filter and Search Bar */}
+                <div className="bg-neutral-950 border border-neutral-900 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="relative w-full sm:w-96">
+                    <Search className="w-4 h-4 text-neutral-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Search invoices by ID, customer, email, or product..."
+                      value={invoiceSearch}
+                      onChange={(e) => setInvoiceSearch(e.target.value)}
+                      className="w-full bg-neutral-900 border border-neutral-800 rounded-lg pl-10 pr-4 py-2 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-blue-500 transition-colors"
+                    />
+                  </div>
+                  {invoiceSearch && (
+                    <button
+                      onClick={() => setInvoiceSearch('')}
+                      className="text-xs text-neutral-400 hover:text-white transition-colors"
+                    >
+                      Clear search filter
+                    </button>
+                  )}
+                </div>
+
+                <div className="bg-neutral-950 border border-neutral-900 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead className="bg-neutral-900/50 border-b border-neutral-900">
+                        <tr>
+                          <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest whitespace-nowrap">Invoice ID</th>
+                          <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest whitespace-nowrap">Date</th>
+                          <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest whitespace-nowrap">Customer</th>
+                          <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest min-w-[260px]">Purchased Products</th>
+                          <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest whitespace-nowrap">Total Amount</th>
+                          <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest whitespace-nowrap">Status</th>
+                          <th className="py-4 px-6 text-right text-xs font-bold text-neutral-400 uppercase tracking-widest whitespace-nowrap">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-900/50">
+                        {invoiceList.map((order) => {
+                          const displayInvoiceId = `INV-${order.id ? String(order.id).replace(/^TZ_?/, '') : 'UNKNOWN'}`;
+                          const orderItems = order.items || [];
+
+                          return (
+                            <tr key={`inv-${order.id}`} className="hover:bg-neutral-900/30 transition-colors">
+                              <td className="py-4 px-6 font-mono text-sm text-white font-bold whitespace-nowrap">
+                                {displayInvoiceId}
+                              </td>
+                              <td className="py-4 px-6 text-sm text-neutral-400 whitespace-nowrap">
+                                {order.orderDate ? new Date(order.orderDate).toLocaleDateString() : 'N/A'}
+                              </td>
+                              <td className="py-4 px-6 text-sm text-neutral-300">
+                                <div className="font-semibold text-white">{order.fullname || 'Guest Customer'}</div>
+                                <div className="text-xs text-neutral-500 font-mono">{order.email || ''}</div>
+                              </td>
+                              <td className="py-4 px-6 text-sm text-neutral-300">
+                                {orderItems.length === 0 ? (
+                                  <span className="text-xs text-neutral-600 italic">No line items</span>
+                                ) : (
+                                  <div className="space-y-1 max-w-md">
+                                    {orderItems.map((item: any, iIdx: number) => (
+                                      <div key={iIdx} className="flex items-center gap-2 text-xs">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                                        <span className="font-medium text-neutral-200 truncate">
+                                          {item.name || item.id}
+                                        </span>
+                                        <span className="text-neutral-500 font-mono">
+                                          ×{item.quantity || 1}
+                                        </span>
+                                        {item.price ? (
+                                          <span className="text-neutral-400 font-mono text-[11px]">
+                                            (₦{(item.price * (item.quantity || 1)).toLocaleString()})
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-4 px-6 font-mono text-sm font-bold text-emerald-400 whitespace-nowrap">
+                                ₦{order.total ? order.total.toLocaleString() : '0'}
+                              </td>
+                              <td className="py-4 px-6 whitespace-nowrap">
+                                <span className={`inline-flex px-2.5 py-1 rounded text-[10px] uppercase font-bold tracking-wider border ${
+                                  order.status === 'Cancelled'
+                                    ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                                    : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                }`}>
+                                  {(order as any).paymentOption === 'payonline' || order.status === 'Confirmed' ? 'Paid' : (order.status || 'Pending')}
+                                </span>
+                              </td>
+                              <td className="py-4 px-6 text-right whitespace-nowrap">
+                                <button
+                                  onClick={() => generateReceipt(order)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/30 text-xs font-bold transition-all hover:scale-105"
+                                >
+                                  <FileText className="w-3.5 h-3.5" />
+                                  <span>Generate Receipt</span>
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {invoiceList.length === 0 && (
+                          <tr>
+                            <td colSpan={7} className="py-12 text-center text-neutral-500 text-sm">
+                              {invoiceSearch ? 'No invoices match your search query.' : 'No invoices found.'}
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-              <div className="bg-neutral-950 border border-neutral-900 rounded-2xl overflow-hidden shadow-sm">
-                <table className="w-full text-left">
-                  <thead className="bg-neutral-900/50 border-b border-neutral-900">
-                    <tr>
-                      <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Invoice ID</th>
-                      <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Date</th>
-                      <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Amount</th>
-                      <th className="py-4 px-6 text-xs font-bold text-neutral-400 uppercase tracking-widest">Status</th>
-                      <th className="py-4 px-6 text-right text-xs font-bold text-neutral-400 uppercase tracking-widest">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-900/50">
-                    {orders.slice(0, 5).map((order) => (
-                      <tr key={`inv-${order.id}`} className="hover:bg-neutral-900/30 transition-colors">
-                        <td className="py-4 px-6 font-mono text-sm text-white">INV-{order.id.slice(2)}</td>
-                        <td className="py-4 px-6 text-sm text-neutral-400">{new Date(order.orderDate).toLocaleDateString()}</td>
-                        <td className="py-4 px-6 font-mono text-sm font-bold text-white">₦{order.total.toLocaleString()}</td>
-                        <td className="py-4 px-6">
-                           <span className="inline-flex px-2 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[10px] uppercase font-bold tracking-wider">Paid</span>
-                        </td>
-                        <td className="py-4 px-6 text-right">
-                           <button onClick={() => generateReceipt(order)} className="text-blue-400 hover:text-blue-300 text-sm font-bold transition-colors">Generate Receipt</button>
-                        </td>
-                      </tr>
-                    ))}
-                    {filteredOrders.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="py-12 text-center text-neutral-500 text-sm">No invoices generated yet.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
 {activeTab === 'admins' && (
             <div className="p-8 animate-fade-in overflow-y-auto h-full">
