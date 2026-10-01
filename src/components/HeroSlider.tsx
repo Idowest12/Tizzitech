@@ -6,8 +6,8 @@ import { HeroConfig, HeroSlide } from '../types';
 interface HeroSliderProps {
   config: HeroConfig;
   greeting?: string;
-  onShopNow: () => void;
-  onSecondaryAction?: (actionName?: string) => void;
+  onShopNow: (slide?: HeroSlide, buttonText?: string) => void;
+  onSecondaryAction?: (actionName?: string, slide?: HeroSlide) => void;
   brands?: string[];
   onSelectBrand?: (brand: string) => void;
 }
@@ -164,17 +164,19 @@ export function HeroSlider({
             {/* Action Buttons */}
             <div className="flex flex-wrap items-center gap-4 pt-2">
               <button
-                onClick={onShopNow}
-                className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 px-8 text-xs sm:text-sm tracking-widest uppercase transition-all flex items-center gap-2.5 rounded-xl shadow-lg shadow-blue-600/25 hover:scale-[1.01] active:scale-[0.99]"
+                type="button"
+                onClick={() => onShopNow(currentSlide, cleanPrimaryText)}
+                className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 px-8 text-xs sm:text-sm tracking-widest uppercase transition-all flex items-center gap-2.5 rounded-xl shadow-lg shadow-blue-600/25 hover:scale-[1.01] active:scale-[0.99] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
               >
                 <span>{cleanPrimaryText}</span>
-                <ArrowRight className="w-4 h-4" />
+                <ArrowRight className="w-4 h-4" aria-hidden="true" />
               </button>
 
               {onSecondaryAction && cleanSecondaryText && (
                 <button
-                  onClick={() => onSecondaryAction(cleanSecondaryText)}
-                  className="bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 text-neutral-200 hover:text-white font-bold py-3.5 px-6 text-xs sm:text-sm tracking-widest uppercase transition-all rounded-xl backdrop-blur-sm"
+                  type="button"
+                  onClick={() => onSecondaryAction(cleanSecondaryText, currentSlide)}
+                  className="bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 text-neutral-200 hover:text-white font-bold py-3.5 px-6 text-xs sm:text-sm tracking-widest uppercase transition-all rounded-xl backdrop-blur-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400"
                 >
                   <span>{cleanSecondaryText}</span>
                 </button>

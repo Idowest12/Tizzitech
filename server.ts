@@ -338,8 +338,46 @@ function getAdminDb() {
   return null;
 }
 
+let firebaseApp: any = null;
 let firebaseDb: any = null;
-let isSigningIn = false;
+let firebaseAuth: any = null;
+let serverAuthPromise: Promise<any> | null = null;
+
+// In-memory caching fallbacks for OTPs and sessions
+export const memoryOtps = new Map<string, { hash: string; expires: number }>();
+export const memoryAdminSessions = new Map<string, { ip: string; userAgent: string; email: string; timestamp: number }>();
+
+export async function ensureServerAuth() {
+  if (firebaseAuth?.currentUser?.email === 'server-admin@tizzitech.com') {
+    return firebaseAuth.currentUser;
+  }
+  if (serverAuthPromise) {
+    return serverAuthPromise;
+  }
+  if (!firebaseApp) {
+    getFirebaseDb();
+  }
+  if (!firebaseAuth && firebaseApp) {
+    firebaseAuth = getAuth(firebaseApp);
+  }
+  if (!firebaseAuth) {
+    throw new Error('Firebase Auth not available');
+  }
+
+  serverAuthPromise = signInWithEmailAndPassword(firebaseAuth, "server-admin@tizzitech.com", "SuperSecurePassword123!")
+    .then((cred) => {
+      console.log("Successfully authenticated server-side Firebase connection as", cred.user.email);
+      serverAuthPromise = null;
+      return cred.user;
+    })
+    .catch((err) => {
+      console.warn("Failed to authenticate server-side Firebase connection:", err.message);
+      serverAuthPromise = null;
+      throw err;
+    });
+
+  return serverAuthPromise;
+}
 
 function getFirebaseDb() {
   if (firebaseDb) return firebaseDb;
@@ -363,25 +401,13 @@ function getFirebaseDb() {
     }
     const configRaw = fs.readFileSync(configPath, 'utf-8');
     const firebaseConfig = JSON.parse(configRaw);
-    const app = initializeApp(firebaseConfig);
-    firebaseDb = getFirestore(app, firebaseConfig.firestoreDatabaseId || "(default)");
+    firebaseApp = initializeApp(firebaseConfig);
+    firebaseAuth = getAuth(firebaseApp);
+    firebaseDb = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId || "(default)");
     console.log('Successfully initialized connection to Firebase.');
 
-    // Authenticate background connection to bypass security rules
-    if (!isSigningIn) {
-      isSigningIn = true;
-      const auth = getAuth(app);
-      signInWithEmailAndPassword(auth, "server-admin@tizzitech.com", "SuperSecurePassword123!")
-        .then((cred) => {
-          console.log("Successfully authenticated server-side Firebase connection as", cred.user.email);
-        })
-        .catch((err) => {
-          console.error("Failed to authenticate server-side Firebase connection:", err.message);
-        })
-        .finally(() => {
-          isSigningIn = false;
-        });
-    }
+    // Kick off server background authentication
+    ensureServerAuth().catch(() => {});
 
     return firebaseDb;
   } catch (err: any) {
@@ -4462,35 +4488,49 @@ app.post('/api/admin/send-otp', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ success: false, message: 'Email required' });
 
+  // Ensure server connection is authenticated as super admin
+  await ensureServerAuth().catch((err) => console.warn('ensureServerAuth notice in send-otp:', err.message));
   const fbDb = getFirebaseDb();
-  if (!fbDb) return res.status(500).json({ success: false, message: 'No DB' });
 
   const dId = getDocId(email);
-  try {
-    let adminSnap = await getDoc(doc(fbDb, 'admins', dId));
-    
-    // Auto-create/seed the super administrator if no administrator exists yet
-    if (!adminSnap.exists() && isAuthorizedAdminEmail(email)) {
-      await setDoc(doc(fbDb, 'admins', dId), { email, role: 'super_admin', addedAt: new Date().toISOString() });
-      adminSnap = await getDoc(doc(fbDb, 'admins', dId));
-    }
+  const isAuthorized = isAuthorizedAdminEmail(email);
 
-    if (!adminSnap.exists()) {
-      await logSecurityEvent(req, 'ADMIN_UNAUTHORIZED_ACCESS', 'HIGH', `Unauthorized email attempted admin OTP: ${email}`, email);
-      await logAdminAuthAttempt({
-        req,
-        action: 'OTP_REQUEST',
-        status: 'FAILURE',
-        email,
-        method: 'OTP',
-        details: `Unauthorized email attempted admin OTP request: ${email}`,
-        statusCode: 403
-      });
+  if (!isAuthorized) {
+    if (fbDb) {
+      try {
+        const adminSnap = await getDoc(doc(fbDb, 'admins', dId));
+        if (!adminSnap.exists()) {
+          await logSecurityEvent(req, 'ADMIN_UNAUTHORIZED_ACCESS', 'HIGH', `Unauthorized email attempted admin OTP: ${email}`, email);
+          await logAdminAuthAttempt({
+            req,
+            action: 'OTP_REQUEST',
+            status: 'FAILURE',
+            email,
+            method: 'OTP',
+            details: `Unauthorized email attempted admin OTP request: ${email}`,
+            statusCode: 403
+          });
+          return res.status(403).json({ success: false, message: 'Unauthorized email' });
+        }
+      } catch (err: any) {
+        console.error('send-otp database check failed for non-primary admin:', err.message);
+        return res.status(403).json({ success: false, message: 'Unauthorized email or database check failed' });
+      }
+    } else {
       return res.status(403).json({ success: false, message: 'Unauthorized email' });
     }
-  } catch (err: any) {
-    console.error('send-otp database check failed:', err.message);
-    return res.status(500).json({ success: false, message: 'DB Error: ' + err.message });
+  } else {
+    // Primary authorized admin (e.g. idowutosin70@gmail.com)
+    if (fbDb) {
+      try {
+        const adminSnap = await getDoc(doc(fbDb, 'admins', dId));
+        if (!adminSnap.exists()) {
+          await setDoc(doc(fbDb, 'admins', dId), { email, role: 'super_admin', addedAt: new Date().toISOString() });
+        }
+      } catch (err: any) {
+        console.warn('Non-blocking: could not sync primary admin record to Firestore:', err.message);
+      }
+    }
   }
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -4499,10 +4539,15 @@ app.post('/api/admin/send-otp', async (req, res) => {
   const secret = process.env.ADMIN_KEY || 'default_secret';
   const hashedOtp = crypto.createHmac('sha256', secret).update(otp).digest('hex');
 
-  try {
-    await setDoc(doc(fbDb, 'admin_otps', docId), { hash: hashedOtp, expires });
-  } catch(e: any) {
-    console.error('Failed to save OTP:', e.message);
+  // Always store in memory cache immediately so OTP verification never fails
+  memoryOtps.set(docId, { hash: hashedOtp, expires });
+
+  if (fbDb) {
+    try {
+      await setDoc(doc(fbDb, 'admin_otps', docId), { hash: hashedOtp, expires });
+    } catch(e: any) {
+      console.warn('Failed to save OTP to Firestore (using memory fallback):', e.message);
+    }
   }
 
   const subject = "Tizzitech Admin Portal - Your Access Code";
@@ -4544,168 +4589,152 @@ app.post('/api/admin/send-otp', async (req, res) => {
 
 app.post('/api/admin/verify-otp', async (req, res) => {
   const { email, otp } = req.body;
+  if (!email || !otp) return res.status(400).json({ success: false, message: 'Email and OTP required' });
+
+  await ensureServerAuth().catch((err) => console.warn('ensureServerAuth notice in verify-otp:', err.message));
   const fbDb = getFirebaseDb();
-  if (!fbDb) return res.status(500).json({ success: false });
 
   const dId = getDocId(email);
-  try {
-    let adminSnap = await getDoc(doc(fbDb, 'admins', dId));
-    if (!adminSnap.exists() && isAuthorizedAdminEmail(email)) {
-      await setDoc(doc(fbDb, 'admins', dId), { email, role: 'super_admin', addedAt: new Date().toISOString() });
-      adminSnap = await getDoc(doc(fbDb, 'admins', dId));
-    }
-    if (!adminSnap.exists()) {
-      await logSecurityEvent(req, 'ADMIN_UNAUTHORIZED_ACCESS', 'HIGH', `Unauthorized email attempted OTP verify: ${email}`, email);
-      await logAdminAuthAttempt({
-        req,
-        action: 'OTP_VERIFY',
-        status: 'FAILURE',
-        email,
-        method: 'OTP',
-        details: `Unauthorized email attempted OTP verification: ${email}`,
-        statusCode: 403
-      });
+  const isAuthorized = isAuthorizedAdminEmail(email);
+
+  if (!isAuthorized) {
+    if (fbDb) {
+      try {
+        let adminSnap = await getDoc(doc(fbDb, 'admins', dId));
+        if (!adminSnap.exists()) {
+          return res.status(403).json({ success: false, message: 'Unauthorized' });
+        }
+      } catch (err) {
+        return res.status(403).json({ success: false, message: 'Unauthorized' });
+      }
+    } else {
       return res.status(403).json({ success: false, message: 'Unauthorized' });
     }
-  } catch (err) {
-    return res.status(500).json({ success: false });
   }
 
   const docId = getDocId(email);
-  try {
-    const snap = await getDoc(doc(fbDb, 'admin_otps', docId));
-    if (!snap.exists()) {
-      await logAdminAuthAttempt({
-        req,
-        action: 'OTP_VERIFY',
-        status: 'FAILURE',
-        email,
-        method: 'OTP',
-        details: `No pending OTP found for ${email}`,
-        statusCode: 400
-      });
-      return res.status(400).json({ success: false, message: 'No OTP' });
+  let record: { hash: string; expires: number } | null = null;
+  const memRecord = memoryOtps.get(docId);
+  if (memRecord) {
+    record = memRecord;
+  } else if (fbDb) {
+    try {
+      const snap = await getDoc(doc(fbDb, 'admin_otps', docId));
+      if (snap.exists()) {
+        record = snap.data() as any;
+      }
+    } catch (e: any) {
+      console.warn('Could not read OTP from Firestore:', e.message);
     }
+  }
+
+  if (!record) {
+    await logAdminAuthAttempt({
+      req,
+      action: 'OTP_VERIFY',
+      status: 'FAILURE',
+      email,
+      method: 'OTP',
+      details: `No pending OTP found for ${email}`,
+      statusCode: 400
+    });
+    return res.status(400).json({ success: false, message: 'No OTP' });
+  }
+
+  if (Date.now() > record.expires) {
+    memoryOtps.delete(docId);
+    if (fbDb) {
+      deleteDoc(doc(fbDb, 'admin_otps', docId)).catch(() => {});
+    }
+    await logSecurityEvent(req, 'ADMIN_OTP_EXPIRED', 'WARN', `Expired OTP used by ${email}`, email);
+    await logAdminAuthAttempt({
+      req,
+      action: 'OTP_VERIFY',
+      status: 'FAILURE',
+      email,
+      method: 'OTP',
+      details: `Expired OTP presented for ${email}`,
+      statusCode: 400
+    });
+    return res.status(400).json({ success: false, message: 'Expired' });
+  }
+
+  const secret = process.env.ADMIN_KEY || 'default_secret';
+  const hashedOtp = crypto.createHmac('sha256', secret).update(otp).digest('hex');
+
+  if (record.hash === hashedOtp) {
+    memoryOtps.delete(docId);
+    if (fbDb) {
+      deleteDoc(doc(fbDb, 'admin_otps', docId)).catch(() => {});
+    }
+    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    const sessionDocId = getDocId(email + "_session");
+
+    memoryAdminSessions.set(sessionDocId, { ip: String(ip), userAgent: String(userAgent), email, timestamp: Date.now() });
+
+    if (fbDb) {
+      setDoc(doc(fbDb, 'admin_sessions', sessionDocId), { ip, userAgent }).catch(() => {});
+    }
+    await logServerAuditActivity(req, 'LOGIN_SUCCESS', `Administrator logged in successfully`, email);
+    await logSecurityEvent(req, 'ADMIN_LOGIN_SUCCESS', 'INFO', `Administrator authenticated successfully via OTP`, email);
+    await logAdminAuthAttempt({
+      req,
+      action: 'OTP_VERIFY',
+      status: 'SUCCESS',
+      email,
+      method: 'OTP',
+      details: `Administrator authenticated successfully via OTP for ${email}`,
+      statusCode: 200
+    });
     
-    const record = snap.data();
-    if (Date.now() > record.expires) {
-      await deleteDoc(doc(fbDb, 'admin_otps', docId));
-      await logSecurityEvent(req, 'ADMIN_OTP_EXPIRED', 'WARN', `Expired OTP used by ${email}`, email);
-      await logAdminAuthAttempt({
-        req,
-        action: 'OTP_VERIFY',
-        status: 'FAILURE',
-        email,
-        method: 'OTP',
-        details: `Expired OTP presented for ${email}`,
-        statusCode: 400
-      });
-      return res.status(400).json({ success: false, message: 'Expired' });
-    }
-
-    const secret = process.env.ADMIN_KEY || 'default_secret';
-    const hashedOtp = crypto.createHmac('sha256', secret).update(otp).digest('hex');
-
-    if (record.hash === hashedOtp) {
-      await deleteDoc(doc(fbDb, 'admin_otps', docId));
-      const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
-      const userAgent = req.headers['user-agent'] || 'unknown';
-      const sessionDocId = getDocId(email + "_session");
-      await setDoc(doc(fbDb, 'admin_sessions', sessionDocId), { ip, userAgent });
-      await logServerAuditActivity(req, 'LOGIN_SUCCESS', `Administrator logged in successfully`, email);
-      await logSecurityEvent(req, 'ADMIN_LOGIN_SUCCESS', 'INFO', `Administrator authenticated successfully via OTP`, email);
-      await logAdminAuthAttempt({
-        req,
-        action: 'OTP_VERIFY',
-        status: 'SUCCESS',
-        email,
-        method: 'OTP',
-        details: `Administrator authenticated successfully via OTP for ${email}`,
-        statusCode: 200
-      });
-      
-      const token = jwt.sign({ userId: dId, email, role: 'admin' }, JWT_SECRET, { expiresIn: '12h' });
-      return res.json({ success: true, token });
-    } else {
-      await logSecurityEvent(req, 'ADMIN_LOGIN_FAILED', 'HIGH', `Invalid admin OTP code attempt for ${email}`, email);
-      await logAdminAuthAttempt({
-        req,
-        action: 'OTP_VERIFY',
-        status: 'FAILURE',
-        email,
-        method: 'OTP',
-        details: `Invalid OTP code entered for ${email}`,
-        statusCode: 400
-      });
-      return res.status(400).json({ success: false, message: 'Invalid OTP' });
-    }
-  } catch (e) {
-    return res.status(500).json({ success: false });
+    const token = jwt.sign({ userId: dId, email, role: 'admin' }, JWT_SECRET, { expiresIn: '12h' });
+    return res.json({ success: true, token });
+  } else {
+    await logSecurityEvent(req, 'ADMIN_LOGIN_FAILED', 'HIGH', `Invalid admin OTP code attempt for ${email}`, email);
+    await logAdminAuthAttempt({
+      req,
+      action: 'OTP_VERIFY',
+      status: 'FAILURE',
+      email,
+      method: 'OTP',
+      details: `Invalid OTP code entered for ${email}`,
+      statusCode: 400
+    });
+    return res.status(400).json({ success: false, message: 'Invalid OTP' });
   }
 });
 
 app.post('/api/admin/validate-session', async (req, res) => {
-  const { email } = req.body;
-  const fbDb = getFirebaseDb();
-  if (!fbDb) return res.json({ valid: false });
+  const { email, token } = req.body;
+  if (!email || !token) {
+    return res.json({ valid: false, message: 'OTP verification required.' });
+  }
 
   const dId = getDocId(email);
-  try {
-    const adminSnap = await getDoc(doc(fbDb, 'admins', dId));
-    if (!adminSnap.exists()) return res.status(403).json({ valid: false });
-  } catch (err) {
-    return res.status(500).json({ valid: false });
-  }
-
   const sessionDocId = getDocId(email + "_session");
+
   try {
-    const snap = await getDoc(doc(fbDb, 'admin_sessions', sessionDocId));
-    if (!snap.exists()) {
-      await logAdminAuthAttempt({
-        req,
-        action: 'SESSION_VALIDATE',
-        status: 'FAILURE',
-        email,
-        method: 'SESSION',
-        details: `No active session found in database for ${email}`,
-        statusCode: 401
-      });
-      return res.json({ valid: false });
-    }
-    
-    const session = snap.data();
-    const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    if (decoded && decoded.email === email && decoded.role === 'admin') {
+      const memSession = memoryAdminSessions.get(sessionDocId);
+      if (memSession && memSession.email === email) {
+        return res.json({ valid: true });
+      }
 
-    if (session.ip !== ip || session.userAgent !== userAgent) {
-      await deleteDoc(doc(fbDb, 'admin_sessions', sessionDocId));
-      await logAdminAuthAttempt({
-        req,
-        action: 'SESSION_VALIDATE',
-        status: 'FAILURE',
-        email,
-        method: 'SESSION',
-        details: `Session revoked due to IP/User-Agent fingerprint change`,
-        statusCode: 401,
-        metadata: { expectedIp: session.ip, currentIp: ip }
-      });
-      return res.json({ valid: false });
+      const fbDb = getFirebaseDb();
+      if (fbDb) {
+        const snap = await getDoc(doc(fbDb, 'admin_sessions', sessionDocId));
+        if (snap.exists()) {
+          return res.json({ valid: true });
+        }
+      }
     }
-
-    const adminToken = jwt.sign({ userId: dId, email, role: 'admin' }, JWT_SECRET, { expiresIn: '12h' });
-    await logAdminAuthAttempt({
-      req,
-      action: 'SESSION_VALIDATE',
-      status: 'SUCCESS',
-      email,
-      method: 'SESSION',
-      details: `Active administrative session validated successfully for ${email}`,
-      statusCode: 200
-    });
-    return res.json({ valid: true, token: adminToken });
   } catch (e) {
-    return res.json({ valid: false });
+    // Expired or invalid token
   }
+
+  return res.json({ valid: false, message: 'Session expired. Please enter OTP.' });
 });
 
 app.post('/api/admin/logout', async (req, res) => {
@@ -5209,6 +5238,9 @@ ${JSON.stringify(structuredData, null, 2)}
 }
 
 async function boot() {
+  // Pre-authenticate server-side Firebase connection
+  ensureServerAuth().catch((err) => console.warn('Boot server auth notice:', err.message));
+
   app.get('/admin', (req, res) => {
     res.redirect('/admin.html');
   });

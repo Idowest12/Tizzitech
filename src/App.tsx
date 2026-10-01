@@ -31,7 +31,7 @@ const Newsletter = React.lazy(() => import("./components/Newsletter").then(m => 
 import { useAuth } from "./contexts/AuthContext";
 import { useToast } from "./contexts/ToastContext";
 import { initialProducts, CATEGORIES as FALLBACK_CATEGORIES, BRANDS as FALLBACK_BRANDS, defaultHeroConfig } from "./data";
-import { Category, Condition, CartItem, Product, Order, HeroConfig, LaunchSettings, TechOfTheDayConfig } from "./types";
+import { Category, Condition, CartItem, Product, Order, HeroConfig, HeroSlide, LaunchSettings, TechOfTheDayConfig } from "./types";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -671,6 +671,98 @@ export default function App() {
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
+  // Reliable navigation and viewport scroll to products catalog
+  const scrollToProductGrid = useCallback((category?: Category | "All" | "Tech" | "Accessories") => {
+    setView("store");
+    if (category) {
+      setSelectedCategory(category);
+    }
+    
+    const performScroll = () => {
+      const grid = document.getElementById("product-grid");
+      if (grid) {
+        const headerOffset = 90;
+        const rect = grid.getBoundingClientRect();
+        const absoluteTop = window.pageYOffset + rect.top;
+        const targetY = Math.max(0, absoluteTop - headerOffset);
+        
+        window.scrollTo({
+          top: targetY,
+          behavior: "smooth"
+        });
+        
+        // Immediate fallback check if browser halted smooth scrolling
+        setTimeout(() => {
+          if (Math.abs(window.pageYOffset - targetY) > 80) {
+            grid.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }, 120);
+      } else {
+        window.scrollTo({ top: 560, behavior: "smooth" });
+      }
+    };
+
+    requestAnimationFrame(performScroll);
+    setTimeout(performScroll, 60);
+  }, []);
+
+  // Intelligently route hero banner clicks to their dedicated destinations or category filters
+  const handleHeroAction = useCallback((slide?: HeroSlide, buttonText?: string) => {
+    const text = (buttonText || '').trim().toLowerCase();
+    const title = (slide?.title || '').toLowerCase();
+    const badge = (slide?.badge || '').toLowerCase();
+    const subtitle = (slide?.subtitle || '').toLowerCase();
+
+    // 1. Pre-Launch / Waitlist action
+    if (text.includes("launch") || text.includes("2026") || text.includes("waitlist")) {
+      setView("launch");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    // 2. Tech of the Day
+    if (text.includes("tech") && (text.includes("day") || title.includes("tech of the day"))) {
+      setView("techoftheday");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    // 3. Track order
+    if (text.includes("track")) {
+      setView("tracking");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    // 4. Specifically Accessories (e.g. Slide 4: "AUDIO, CHARGERS & PERIPHERALS", "View Accessories")
+    if (
+      text.includes("accessor") ||
+      title.includes("accessor") ||
+      title.includes("audio") ||
+      title.includes("charger") ||
+      badge.includes("accessor") ||
+      subtitle.includes("chargers")
+    ) {
+      setSelectedBrands([]);
+      setSearchQuery("");
+      scrollToProductGrid("Accessories");
+      return;
+    }
+
+    // 5. Standard Shop / Browse Products / Laptops / Workspace
+    if (title.includes("laptop") || title.includes("workspace")) {
+      setSelectedBrands([]);
+      setSearchQuery("");
+      scrollToProductGrid("Tech");
+      return;
+    }
+
+    // 6. General Shop Now / Browse Catalog -> Takes user to all products
+    setSelectedBrands([]);
+    setSearchQuery("");
+    scrollToProductGrid("All");
+  }, [scrollToProductGrid]);
+
   // Filter Logic
   const filteredProducts = useMemo(() => {
     let result = products;
@@ -848,15 +940,7 @@ export default function App() {
           <RefundPolicy />
         ) : view === "about" ? (
           <AboutUs
-            onShopNow={() => {
-              setView("store");
-              window.scrollTo({ top: 0, behavior: "smooth" });
-              setTimeout(() => {
-                document
-                  .getElementById("product-grid")
-                  ?.scrollIntoView({ behavior: "smooth" });
-              }, 100);
-            }}
+            onShopNow={() => scrollToProductGrid("All")}
           />
         ) : view === "contact" ? (
           <ContactUs />
@@ -919,27 +1003,11 @@ export default function App() {
                   config={heroConfig}
                   greeting={user ? getGreeting() : undefined}
                   brands={brandsList}
-                  onShopNow={() => {
-                    document
-                      .getElementById("product-grid")
-                      ?.scrollIntoView({ behavior: "smooth" });
-                  }}
-                  onSecondaryAction={(actionText) => {
-                    if (actionText?.toLowerCase().includes("launch") || actionText?.includes("2026")) {
-                      setView("launch");
-                    } else if (actionText?.toLowerCase().includes("track")) {
-                      setView("tracking");
-                    } else if (actionText?.toLowerCase().includes("tech") || actionText?.toLowerCase().includes("day")) {
-                      document.getElementById("tech-of-day")?.scrollIntoView({ behavior: "smooth" });
-                    } else {
-                      document.getElementById("product-grid")?.scrollIntoView({ behavior: "smooth" });
-                    }
-                  }}
+                  onShopNow={(slide, buttonText) => handleHeroAction(slide, buttonText || slide?.primaryButtonText || 'Shop Now')}
+                  onSecondaryAction={(actionText, slide) => handleHeroAction(slide, actionText || slide?.secondaryButtonText)}
                   onSelectBrand={(brand) => {
                     setSelectedBrands([brand]);
-                    document
-                      .getElementById("product-grid")
-                      ?.scrollIntoView({ behavior: "smooth" });
+                    scrollToProductGrid();
                   }}
                 />
               )}

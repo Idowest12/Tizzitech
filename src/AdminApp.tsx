@@ -15,8 +15,10 @@ export default function AdminApp() {
   const [authStep, setAuthStep] = useState<'login' | 'otp'>('login');
   const [otpValue, setOtpValue] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
+  const [otpSuccessMsg, setOtpSuccessMsg] = useState('');
+  const [isResending, setIsResending] = useState(false);
 
-    const [error, setError] = useState('');
+  const [error, setError] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
@@ -26,52 +28,44 @@ export default function AdminApp() {
   const [coupons, setCoupons] = useState<any[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
-  const isManualLogin = useRef(false);
 
-  // Load auth state from session
+  // Require OTP on entry: check if a verified session token already exists in this browser tab
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        if (user.email) {
-          try {
-            const valRes = await fetch('/api/admin/validate-session', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email: user.email })
-            });
-            const valData = await valRes.json();
-            
-            if (valData.valid) {
-              if (valData.token) {
-                sessionStorage.setItem('tizzitech_admin_token', valData.token);
-              }
-              setAdminEmail(user.email);
-              logAuditActivity('LOGIN_ATTEMPT', 'Successful auto-login via valid session', user.email);
-              setIsAuthenticated(true);
-            } else {
-              // Stale Firebase session without a valid custom admin session.
-              if (!isManualLogin.current) {
-                // We log them out so they can click "Sign in with Google" again.
-                await signOut(auth);
-              }
-            }
-          } catch(e) { console.error(e); }
+    const sessionToken = sessionStorage.getItem('tizzitech_admin_token');
+    const sessionEmail = sessionStorage.getItem('tizzitech_admin_email');
+
+    // If no existing token in this session, always force the login + OTP flow
+    if (!sessionToken || !sessionEmail) {
+      setIsAuthenticated(false);
+      setAuthStep('login');
+      return;
+    }
+
+    // Verify previously authenticated session token
+    fetch('/api/admin/validate-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: sessionEmail, token: sessionToken })
+    })
+      .then(res => res.json())
+      .then(valData => {
+        if (valData.valid) {
+          setAdminEmail(sessionEmail);
+          setIsAuthenticated(true);
         } else {
-          signOut(auth);
-          setError('Unauthorized: Your email is not registered as an administrator.');
+          sessionStorage.removeItem('tizzitech_admin_token');
+          sessionStorage.removeItem('tizzitech_admin_email');
+          setIsAuthenticated(false);
+          setAuthStep('login');
         }
-      } else {
-        // Logged out
+      })
+      .catch(() => {
         setIsAuthenticated(false);
-      }
-    });
+        setAuthStep('login');
+      });
+  }, []);
 
-    return () => {
-      unsubscribe();
-    };
-  }, []); // Run once on mount
-
-  // Load Firestore listeners only when authenticated
+  // Load Firestore listeners only when authenticated via OTP
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -130,68 +124,91 @@ export default function AdminApp() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    isManualLogin.current = true;
+    setOtpSuccessMsg('');
+    setLoading(true);
     
     try {
       const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' }); // Force account selection
+      provider.setCustomParameters({ prompt: 'select_account' });
       const cred = await signInWithPopup(auth, provider);
       const user = cred.user;
       
       if (!user.email) throw new Error('No email found in Google profile');
       
-      setAdminEmail(user.email);
-      setAuthStep('otp');
+      const normalizedEmail = user.email.toLowerCase().trim();
+      setAdminEmail(normalizedEmail);
+      setOtpValue(''); // Must enter code received in email
       
       const res = await fetch('/api/admin/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email })
+        body: JSON.stringify({ email: normalizedEmail })
       });
       const data = await res.json();
       
-      if (data.devOtp) {
-        console.log("DEV OTP:", data.devOtp); // For dev preview
-        setOtpValue(data.devOtp);
-        setError("SMTP NOT CONFIGURED: Auto-filling simulated code: " + data.devOtp);
+      if (!data.success) {
+        throw new Error(data.message || 'Failed to dispatch access code to your email.');
       }
-      
-      // Keep token fresh if needed
-      const token = await user.getIdToken();
-      if (token) {
-        sessionStorage.setItem('tizzitech_admin_token', token);
-      }
+
+      setAuthStep('otp');
+      setOtpSuccessMsg(data.message || `A 6-digit access code was sent to ${normalizedEmail}. Please check your inbox.`);
     } catch (err: any) {
       setError(err.message || 'Authentication failed.');
       setAuthStep('login');
-      signOut(auth);
-      isManualLogin.current = false;
+      signOut(auth).catch(() => {});
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setOtpSuccessMsg('');
     setLoading(true);
     try {
       const res = await fetch('/api/admin/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: adminEmail, otp: otpValue })
+        body: JSON.stringify({ email: adminEmail, otp: otpValue.trim() })
+      });
+      const data = await res.json();
+      if (data.success && data.token) {
+        sessionStorage.setItem('tizzitech_admin_token', data.token);
+        sessionStorage.setItem('tizzitech_admin_email', adminEmail);
+        logAuditActivity('LOGIN_SUCCESS', 'Administrator successfully completed 2FA OTP verification', adminEmail);
+        setIsAuthenticated(true);
+      } else {
+        setError(data.message || 'Invalid access code. Please check your email and try again.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Verification failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (!adminEmail || isResending) return;
+    setIsResending(true);
+    setError('');
+    setOtpSuccessMsg('');
+    try {
+      const res = await fetch('/api/admin/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: adminEmail })
       });
       const data = await res.json();
       if (data.success) {
-        if (data.token) {
-          sessionStorage.setItem('tizzitech_admin_token', data.token);
-        }
-        setIsAuthenticated(true);
+        setOtpSuccessMsg(`A fresh 6-digit access code was sent to ${adminEmail}. Check your inbox!`);
       } else {
-        setError(data.message || 'Invalid OTP');
+        setError(data.message || 'Failed to resend code.');
       }
     } catch (err: any) {
-      setError(err.message || 'Verification failed');
+      setError(err.message || 'Network error resending code.');
     } finally {
-      setLoading(false);
+      setIsResending(false);
     }
   };
 
@@ -201,14 +218,16 @@ export default function AdminApp() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: adminEmail })
-      });
+      }).catch(() => {});
       await signOut(auth);
       sessionStorage.removeItem('tizzitech_admin_token');
+      sessionStorage.removeItem('tizzitech_admin_email');
       setIsAuthenticated(false);
       setAuthStep('login');
       setOtpValue('');
       setAdminEmail('');
-      isManualLogin.current = false;
+      setError('');
+      setOtpSuccessMsg('');
     } catch(e) {
       console.error(e);
     }
@@ -415,8 +434,8 @@ if (!isAuthenticated) {
             </h1>
             <p className="text-sm text-neutral-400 max-w-xs mb-8">
               {authStep === 'login' 
-                ? 'Secured access system. Unauthorized entry attempts are logged.'
-                : 'Please enter the 6-digit access code sent to your email.'}
+                ? 'Secured administrative access. Authentication required.'
+                : `Enter the 6-digit access code sent to your email (${adminEmail}).`}
             </p>
           </div>
 
@@ -424,7 +443,7 @@ if (!isAuthenticated) {
             <form onSubmit={handleLogin} className="space-y-6">
               <div>
                 <p className="block text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-2 text-center">
-                  SIGN IN WITH GOOGLE
+                  ADMINISTRATOR LOGIN
                 </p>
               </div>
               {error && (
@@ -436,7 +455,8 @@ if (!isAuthenticated) {
               <button 
                 type="button"
                 onClick={handleLogin}
-                className="w-full bg-neutral-100 hover:bg-white text-black font-bold py-3.5 px-6 rounded-xl text-sm tracking-widest uppercase transition-colors flex items-center justify-center gap-3 shadow-lg shadow-white/5"
+                disabled={loading}
+                className="w-full bg-neutral-100 hover:bg-white text-black font-bold py-3.5 px-6 rounded-xl text-sm tracking-widest uppercase transition-colors flex items-center justify-center gap-3 shadow-lg shadow-white/5 disabled:opacity-50"
               >
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -444,49 +464,75 @@ if (!isAuthenticated) {
                   <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
                   <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
                 </svg>
-                Sign In with Google
+                {loading ? 'Sending Code...' : 'Sign In with Google'}
               </button>
             </form>
           ) : (
             <form onSubmit={handleVerifyOtp} className="space-y-6">
+              {otpSuccessMsg && (
+                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-center">
+                  <p className="text-xs text-emerald-400 font-medium">{otpSuccessMsg}</p>
+                </div>
+              )}
+
               <div>
-                <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-widest mb-2 text-center">
-                  ACCESS CODE
+                <label className="block text-[10px] font-bold text-neutral-400 uppercase tracking-widest mb-2 text-center">
+                  6-DIGIT EMAIL CODE
                 </label>
                 <input
                   type="text"
                   maxLength={6}
+                  autoFocus
                   value={otpValue}
-                  onChange={e => setOtpValue(e.target.value)}
-                  placeholder="------"
-                  className="w-full bg-black border border-neutral-800 rounded-xl px-4 py-4 text-center text-white text-2xl tracking-[1em] focus:outline-none focus:border-emerald-500 transition-colors font-mono"
+                  onChange={e => setOtpValue(e.target.value.replace(/\D/g, ''))}
+                  placeholder="000000"
+                  className="w-full bg-black border border-neutral-800 rounded-xl px-4 py-4 text-center text-white text-2xl tracking-[0.75em] focus:outline-none focus:border-emerald-500 transition-colors font-mono"
                   required
                 />
+                <p className="text-[11px] text-neutral-500 text-center mt-2">
+                  Check your inbox and spam folder for the code.
+                </p>
               </div>
+
               {error && (
                 <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex gap-3 items-start animate-shake">
                   <ShieldAlert className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
                   <p className="text-xs text-red-400 font-medium leading-relaxed">{error}</p>
                 </div>
               )}
+
               <button 
                 type="submit"
                 disabled={otpValue.length !== 6 || loading}
                 className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:hover:bg-emerald-600 text-white font-bold py-3.5 px-6 rounded-xl text-sm tracking-widest uppercase transition-colors flex items-center justify-center gap-3 shadow-lg shadow-emerald-500/10"
               >
-                {loading ? 'Verifying...' : 'Verify Access'}
+                {loading ? 'Verifying...' : 'Verify Access Code'}
               </button>
-              
-              <button 
-                type="button"
-                onClick={() => {
-                  signOut(auth);
-                  setAuthStep('login');
-                }}
-                className="w-full mt-4 bg-transparent hover:text-white text-neutral-500 font-bold py-2 text-xs tracking-widest uppercase transition-colors"
-              >
-                Cancel
-              </button>
+
+              <div className="flex items-center justify-between pt-2">
+                <button 
+                  type="button"
+                  onClick={handleResendOtp}
+                  disabled={isResending}
+                  className="text-xs text-emerald-400 hover:text-emerald-300 font-bold uppercase tracking-wider transition-colors disabled:opacity-50"
+                >
+                  {isResending ? 'Resending...' : 'Resend Code'}
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={() => {
+                    signOut(auth).catch(() => {});
+                    setAuthStep('login');
+                    setOtpValue('');
+                    setError('');
+                    setOtpSuccessMsg('');
+                  }}
+                  className="text-xs text-neutral-500 hover:text-white font-bold uppercase tracking-wider transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
             </form>
           )}
 
