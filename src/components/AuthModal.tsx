@@ -9,6 +9,17 @@ interface AuthModalProps {
 }
 
 export function AuthModal({ onClose }: AuthModalProps) {
+  // Listen for Escape key to close modal
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   const { signInWithGoogle, registerWithEmail, loginWithEmail, resetPassword } = useAuth();
   const { showToast } = useToast();
   const [isLogin, setIsLogin] = useState(true);
@@ -78,20 +89,25 @@ export function AuthModal({ onClose }: AuthModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" role="presentation">
       <div 
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-modal-title"
         className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]"
       >
         <button 
+          type="button"
           onClick={onClose}
-          className="absolute top-4 right-4 p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-full transition-colors z-10"
+          aria-label="Close authentication modal"
+          className="absolute top-4 right-4 p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-full transition-colors z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         >
-          <X className="w-5 h-5" />
+          <X className="w-5 h-5" aria-hidden="true" />
         </button>
         
         <div className="p-6 md:p-8 overflow-y-auto">
             <div className="text-center mb-8">
-              <h2 className="text-2xl font-bold text-white mb-2">
+              <h2 id="auth-modal-title" className="text-2xl font-bold text-white mb-2">
                   {isReset ? 'Reset Password' : (isLogin ? 'Welcome Back' : 'Create an Account')}
               </h2>
               <p className="text-neutral-400 text-sm">

@@ -1,6 +1,6 @@
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from './firebase';
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback, Suspense } from "react";
 import { Menu, ChevronDown, SlidersHorizontal, Lock, ArrowUp, Sparkles, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "./components/Header";
@@ -8,22 +8,26 @@ import { ProductCard } from "./components/ProductCard";
 import { ProductCardSkeleton } from "./components/Skeleton";
 import { Filters } from "./components/Filters";
 import { CartDrawer } from "./components/CartDrawer";
-import { ProductOverviewPane } from "./components/ProductOverviewPane";
-import { CheckoutView } from "./components/CheckoutView";
-import { TrackingDashboard } from "./components/TrackingDashboard";
-import { PrivacyPolicy, TermsOfService, RefundPolicy } from "./components/LegalPages";
-import { UserProfileDashboard } from "./components/UserProfileDashboard";
-import { AuthModal } from "./components/AuthModal";
-import { ResetPasswordView } from "./components/ResetPasswordView";
-import { VerifyEmailView } from "./components/VerifyEmailView";
-import { AboutUs } from "./components/AboutUs";
-import { ContactUs } from "./components/ContactUs";
-import { FAQs } from "./components/FAQs";
-import { TechOfTheDay } from "./components/TechOfTheDay";
-import { ProductDetails } from "./components/ProductDetails";
-import { ProductLaunchWaitlist } from "./components/ProductLaunchWaitlist";
-import { Newsletter } from "./components/Newsletter";
 import { HeroSlider } from "./components/HeroSlider";
+
+// Lazy-loaded secondary & modal components to slash initial JavaScript payload
+const CheckoutView = React.lazy(() => import("./components/CheckoutView").then(m => ({ default: m.CheckoutView })));
+const TrackingDashboard = React.lazy(() => import("./components/TrackingDashboard").then(m => ({ default: m.TrackingDashboard })));
+const UserProfileDashboard = React.lazy(() => import("./components/UserProfileDashboard").then(m => ({ default: m.UserProfileDashboard })));
+const ProductOverviewPane = React.lazy(() => import("./components/ProductOverviewPane").then(m => ({ default: m.ProductOverviewPane })));
+const ProductDetails = React.lazy(() => import("./components/ProductDetails").then(m => ({ default: m.ProductDetails })));
+const ProductLaunchWaitlist = React.lazy(() => import("./components/ProductLaunchWaitlist").then(m => ({ default: m.ProductLaunchWaitlist })));
+const TechOfTheDay = React.lazy(() => import("./components/TechOfTheDay").then(m => ({ default: m.TechOfTheDay })));
+const AboutUs = React.lazy(() => import("./components/AboutUs").then(m => ({ default: m.AboutUs })));
+const ContactUs = React.lazy(() => import("./components/ContactUs").then(m => ({ default: m.ContactUs })));
+const FAQs = React.lazy(() => import("./components/FAQs").then(m => ({ default: m.FAQs })));
+const PrivacyPolicy = React.lazy(() => import("./components/LegalPages").then(m => ({ default: m.PrivacyPolicy })));
+const TermsOfService = React.lazy(() => import("./components/LegalPages").then(m => ({ default: m.TermsOfService })));
+const RefundPolicy = React.lazy(() => import("./components/LegalPages").then(m => ({ default: m.RefundPolicy })));
+const AuthModal = React.lazy(() => import("./components/AuthModal").then(m => ({ default: m.AuthModal })));
+const ResetPasswordView = React.lazy(() => import("./components/ResetPasswordView").then(m => ({ default: m.ResetPasswordView })));
+const VerifyEmailView = React.lazy(() => import("./components/VerifyEmailView").then(m => ({ default: m.VerifyEmailView })));
+const Newsletter = React.lazy(() => import("./components/Newsletter").then(m => ({ default: m.Newsletter })));
 import { useAuth } from "./contexts/AuthContext";
 import { useToast } from "./contexts/ToastContext";
 import { initialProducts, CATEGORIES as FALLBACK_CATEGORIES, BRANDS as FALLBACK_BRANDS, defaultHeroConfig } from "./data";
@@ -124,16 +128,18 @@ export default function App() {
     localStorage.setItem('tizzitech_wishlist', JSON.stringify(wishlist));
   }, [wishlist]);
 
-  const handleToggleWishlist = (product: Product) => {
-    const exists = wishlist.includes(product.id);
-    if (exists) {
-      setWishlist((prev) => prev.filter((id) => id !== product.id));
-      showToast(`"${product.name}" removed from wishlist.`, 'info');
-    } else {
-      setWishlist((prev) => [...prev, product.id]);
-      showToast(`"${product.name}" added to wishlist.`, 'success');
-    }
-  };
+  const handleToggleWishlist = useCallback((product: Product) => {
+    setWishlist((prev) => {
+      const exists = prev.includes(product.id);
+      if (exists) {
+        showToast(`"${product.name}" removed from wishlist.`, 'info');
+        return prev.filter((id) => id !== product.id);
+      } else {
+        showToast(`"${product.name}" added to wishlist.`, 'success');
+        return [...prev, product.id];
+      }
+    });
+  }, [showToast]);
   const [cart, setCart] = useState<CartItem[]>(() => {
     const saved = localStorage.getItem('tizzitech_cart');
     if (saved) {
@@ -227,7 +233,7 @@ export default function App() {
   const [pendingCheckout, setPendingCheckout] = useState(false);
 
   // Helper to transition to product details with SEO friendly canonical path
-  const handleOpenProduct = (p: Product) => {
+  const handleOpenProduct = useCallback((p: Product) => {
     setSelectedProduct(p);
     setView("product-details");
     try {
@@ -235,9 +241,9 @@ export default function App() {
     } catch {
       // fallback
     }
-  };
+  }, []);
 
-  const handleBackFromProduct = () => {
+  const handleBackFromProduct = useCallback(() => {
     setSelectedProduct(null);
     setView("store");
     try {
@@ -245,7 +251,7 @@ export default function App() {
     } catch {
       // fallback
     }
-  };
+  }, []);
 
   useEffect(() => {
     // Parse URL path and query for packages/products or direct views
@@ -325,6 +331,7 @@ export default function App() {
     // Fetch products and settings from cached backend endpoints to reduce Firestore reads and scale seamlessly
     const loadProducts = async () => {
       setLoadingProducts(true);
+      let settingsLoaded = false;
       // 1. Fetch Settings from cached backend endpoint
       try {
         const res = await fetch('/api/settings');
@@ -342,23 +349,26 @@ export default function App() {
             setHeroConfig(s.heroConfig);
             localStorage.setItem('tizzitech_hero_config', JSON.stringify(s.heroConfig));
           }
+          settingsLoaded = true;
         }
       } catch (err) {
         console.warn("Could not load latest global settings from cached backend:", err);
       }
 
-      // Also fetch from Firestore settings/global if available
-      try {
-        const sSnap = await getDoc(doc(db, 'settings', 'global'));
-        if (sSnap.exists()) {
-          const sData = sSnap.data();
-          if (sData.heroConfig) {
-            setHeroConfig(sData.heroConfig);
-            localStorage.setItem('tizzitech_hero_config', JSON.stringify(sData.heroConfig));
+      // Fallback to Firestore only if backend endpoint failed (preventing duplicate network calls)
+      if (!settingsLoaded) {
+        try {
+          const sSnap = await getDoc(doc(db, 'settings', 'global'));
+          if (sSnap.exists()) {
+            const sData = sSnap.data();
+            if (sData.heroConfig) {
+              setHeroConfig(sData.heroConfig);
+              localStorage.setItem('tizzitech_hero_config', JSON.stringify(sData.heroConfig));
+            }
           }
+        } catch (err) {
+          // offline or rules fallback
         }
-      } catch (err) {
-        // offline or rules fallback
       }
       
       // 2. Fetch Products from cached backend endpoint
@@ -374,10 +384,7 @@ export default function App() {
         console.warn("Could not load latest products from cached backend:", err);
         // Products are already initialized with initialProducts, so the app will load successfully
       } finally {
-        // Add a small delay for a smooth perceived experience
-        setTimeout(() => {
-          setLoadingProducts(false);
-        }, 800);
+        setLoadingProducts(false);
       }
     };
     loadProducts();
@@ -509,6 +516,10 @@ export default function App() {
     let intervalId: NodeJS.Timeout;
     if (orders.length > 0) {
       const fetchStatuses = async () => {
+        // Skip background requests when browser tab is inactive/hidden
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+          return;
+        }
         try {
           const orderIds = orders.map(o => o.id);
           const res = await fetch('/api/orders/statuses', {
@@ -624,7 +635,7 @@ export default function App() {
   }, [view, selectedCategory]);
 
   // Cart Handlers
-  const addToCart = (product: Product, e?: React.MouseEvent) => {
+  const addToCart = useCallback((product: Product, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setCart((prev) => {
       const existing = prev.find((item) => item.id === product.id);
@@ -639,26 +650,24 @@ export default function App() {
       return [...prev, { ...product, quantity: 1 }];
     });
     setIsCartOpen(true);
-  };
+  }, []);
 
-  const updateQuantity = (id: string, delta: number) => {
+  const updateQuantity = useCallback((id: string, delta: number) => {
     setCart((prev) =>
       prev.map((item) => {
         if (item.id === id) {
           const newQ = item.quantity + delta;
           if (newQ < 1) return item;
-          const product = products.find((p) => p.id === id);
-          if (product && newQ > product.stock) return item;
           return { ...item, quantity: newQ };
         }
         return item;
       }),
     );
-  };
+  }, []);
 
-  const removeFromCart = (id: string) => {
+  const removeFromCart = useCallback((id: string) => {
     setCart((prev) => prev.filter((item) => item.id !== id));
-  };
+  }, []);
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
@@ -814,7 +823,13 @@ export default function App() {
       </div>
 
       <main className="flex-1 w-full max-w-[100vw] bg-black relative overflow-x-clip">
-        {view === "launch" ? (
+        <Suspense fallback={
+          <div className="flex flex-col items-center justify-center min-h-[50vh] p-8 text-neutral-400">
+            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
+            <span className="text-xs uppercase tracking-widest text-neutral-500 font-bold">Loading Experience...</span>
+          </div>
+        }>
+          {view === "launch" ? (
           <ProductLaunchWaitlist onGoToStore={() => setView("store")} launchSettings={launchSettings} />
         ) : view === "techoftheday" ? (
           <TechOfTheDay 
@@ -1097,10 +1112,13 @@ export default function App() {
             </div>
           </div>
         )}
+        </Suspense>
       </main>
 
       {/* Newsletter */}
-      <Newsletter />
+      <Suspense fallback={null}>
+        <Newsletter />
+      </Suspense>
 
       {/* Footer */}
       <footer className="w-full bg-black border-t border-neutral-900 py-16 mt-auto">
@@ -1277,10 +1295,14 @@ export default function App() {
 
       {/* Product details are handled on full-screen landing pages */}
 
-      {isAuthOpen && <AuthModal onClose={() => {
-        setIsAuthOpen(false);
-        setPendingCheckout(false);
-      }} />}
+      {isAuthOpen && (
+        <Suspense fallback={null}>
+          <AuthModal onClose={() => {
+            setIsAuthOpen(false);
+            setPendingCheckout(false);
+          }} />
+        </Suspense>
+      )}
 
       {/* Floating Back to Top Button (Universal Desktop & Mobile) */}
       <AnimatePresence>

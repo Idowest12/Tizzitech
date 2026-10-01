@@ -10,7 +10,7 @@ interface ProductCardProps {
   onToggleWishlist: (product: Product, e: React.MouseEvent) => void;
 }
 
-export const ProductCard: React.FC<ProductCardProps> = ({ 
+const ProductCardComponent: React.FC<ProductCardProps> = ({ 
   product, 
   onAddToCart, 
   onViewProduct,
@@ -62,10 +62,21 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         ? Object.values(product.specs).filter(Boolean).slice(0, 3).join(' • ') 
         : 'Official Warranty · Certified Tech · Fast Dispatch');
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onViewProduct(product);
+    }
+  };
+
   return (
-    <div 
+    <article 
       onClick={() => onViewProduct(product)}
-      className="group relative flex flex-col h-full bg-neutral-950 rounded-2xl overflow-hidden border border-neutral-900 hover:border-neutral-700/80 transition-all duration-300 shadow-lg hover:shadow-2xl cursor-pointer select-none"
+      onKeyDown={handleKeyDown}
+      tabIndex={0}
+      role="article"
+      aria-label={`${product.brand ? product.brand + ' ' : ''}${displayName || product.name}, Price ₦${product.price.toLocaleString()}`}
+      className="group relative flex flex-col h-full bg-neutral-950 rounded-2xl overflow-hidden border border-neutral-900 hover:border-neutral-700/80 transition-all duration-300 shadow-lg hover:shadow-2xl cursor-pointer select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
     >
       {/* 4:3 Image Aspect Container */}
       <div className="aspect-[4/3] w-full bg-neutral-900 overflow-hidden relative border-b border-neutral-900/90 flex items-center justify-center shrink-0 rounded-t-2xl">
@@ -215,7 +226,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </article>
   );
 };
+
+export const ProductCard = React.memo(ProductCardComponent);
 

@@ -126,20 +126,26 @@ export function Header({
       className="sticky top-0 z-50 w-full border-b border-neutral-900 bg-neutral-950/95 backdrop-blur-md shadow-md shadow-black/40"
     >
       <div className="mx-auto flex h-16 sm:h-20 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <div
-          onClick={handleLogoClick}
-          className="flex items-center gap-3 font-black text-2xl tracking-tighter text-white cursor-pointer group font-serif uppercase"
+        <a
+          href="/"
+          onClick={(e) => {
+            e.preventDefault();
+            handleLogoClick();
+          }}
+          aria-label="Tizzitech - The Brand Behind The Gear"
+          className="flex items-center gap-3 font-black text-2xl tracking-tighter text-white cursor-pointer group font-serif uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg p-1"
         >
           {/* Logo Image */}
           <img
             src="/logo-icon.svg"
-            alt="Tizzitech Logo"
+            alt=""
+            aria-hidden="true"
             className="h-9 w-9 object-contain rounded-lg drop-shadow-[0_0_12px_rgba(2,132,199,0.5)] group-hover:scale-105 transition-transform"
           />
           <span className="flex items-center">
             Tizzi<span className="text-blue-500">tech</span>
           </span>
-        </div>
+        </a>
 
         {/* Center Navigation Links (Desktop) */}
         <nav className="hidden md:flex flex-wrap justify-center flex-1 mx-2 items-center gap-2 lg:gap-6 text-[10px] lg:text-sm font-semibold tracking-widest uppercase text-neutral-400">
@@ -285,39 +291,47 @@ export function Header({
 
           {user && (
             <button
+              type="button"
               onClick={handleProfileClick}
-              className="text-neutral-400 hover:text-white transition-colors"
+              className="text-neutral-400 hover:text-white transition-colors p-1.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               title="Profile"
+              aria-label="User Profile"
             >
-              <User className="h-5 w-5" />
+              <User className="h-5 w-5" aria-hidden="true" />
             </button>
           )}
 
           {user ? (
             <button
+              type="button"
               onClick={handleLogOut}
-              className="text-neutral-400 hover:text-blue-500 transition-colors"
+              className="text-neutral-400 hover:text-blue-500 transition-colors p-1.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               title="Log Out"
+              aria-label="Log Out of your account"
             >
-              <LogOut className="h-5 w-5" />
+              <LogOut className="h-5 w-5" aria-hidden="true" />
             </button>
           ) : (
             <button
+              type="button"
               onClick={handleAuthClick}
-              className="text-neutral-400 hover:text-white transition-colors"
+              className="text-neutral-400 hover:text-white transition-colors p-1.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               title="Sign In / Register"
+              aria-label="Sign In or Create Account"
             >
-              <UserPlus className="h-5 w-5" />
+              <UserPlus className="h-5 w-5" aria-hidden="true" />
             </button>
           )}
 
           <button
+            type="button"
             onClick={handleCartClick}
-            className="relative text-neutral-400 hover:text-white transition-colors"
+            aria-label={`Open shopping cart with ${cartCount} ${cartCount === 1 ? 'item' : 'items'}`}
+            className="relative text-neutral-400 hover:text-white transition-colors p-1.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           >
-            <ShoppingCart className="h-5 w-5" />
+            <ShoppingCart className="h-5 w-5" aria-hidden="true" />
             {cartCount > 0 && (
-              <span className="absolute -top-2 -right-2 flex h-4 w-4 items-center justify-center rounded-full bg-blue-600 text-[9px] font-bold text-white">
+              <span className="absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-blue-600 text-[9px] font-bold text-white shadow-sm">
                 {cartCount}
               </span>
             )}
@@ -339,7 +353,8 @@ export function Header({
               </div>
               <input
                 type="text"
-                className="block w-full border border-neutral-800 rounded bg-neutral-900 py-2 pl-9 pr-3 text-white placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none sm:text-sm transition-colors"
+                aria-label="Search tech products"
+                className="block w-full border border-neutral-800 rounded bg-neutral-900 py-2 pl-9 pr-3 text-white placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:text-sm transition-colors"
                 placeholder="Search..."
                 value={searchQuery}
                 onChange={(e) => {
@@ -353,13 +368,16 @@ export function Header({
           )}
 
           <button
+            type="button"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="bg-neutral-900 border border-neutral-800 p-2 rounded text-neutral-400 hover:text-white transition-colors shrink-0"
+            aria-label={isMobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+            aria-expanded={isMobileMenuOpen}
+            className="bg-neutral-900 border border-neutral-800 p-2 rounded text-neutral-400 hover:text-white transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           >
             {isMobileMenuOpen ? (
-              <X className="w-5 h-5" />
+              <X className="w-5 h-5" aria-hidden="true" />
             ) : (
-              <Menu className="w-5 h-5" />
+              <Menu className="w-5 h-5" aria-hidden="true" />
             )}
           </button>
         </div>

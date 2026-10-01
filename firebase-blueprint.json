@@ -94,9 +94,33 @@
         "deliveryZones": { "type": "array" },
         "heroConfig": { "type": "object" }
       }
+    },
+    "AdminAuditLog": {
+      "title": "AdminAuditLog",
+      "description": "Dedicated record of administrative authentication attempts and security access checks.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "status": { "type": "string" },
+        "email": { "type": "string" },
+        "ip": { "type": "string" },
+        "userAgent": { "type": "string" },
+        "path": { "type": "string" },
+        "method": { "type": "string" },
+        "details": { "type": "string" },
+        "statusCode": { "type": "number" },
+        "timestamp": { "type": "string" },
+        "timestampMs": { "type": "number" }
+      },
+      "required": ["id", "action", "status", "ip", "timestamp"]
     }
   },
   "firestore": {
+    "admin_audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AdminAuditLog" },
+      "description": "Audit trail of administrator login, OTP, passkey, and session authentication attempts."
+    },
     "products/{productId}": {
       "schema": { "$ref": "#/entities/Product" },
       "description": "Products available in the store."

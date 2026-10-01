@@ -12,18 +12,44 @@ interface CartDrawerProps {
 }
 
 export function CartDrawer({ isOpen, onClose, cart, updateQuantity, removeFromCart, onCheckout }: CartDrawerProps) {
+  // Listen for Escape key to close cart
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/60 z-50 transition-opacity backdrop-blur-sm" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-neutral-950 shadow-2xl flex flex-col transform transition-transform duration-300 border-l border-neutral-900">
+      <div 
+        className="fixed inset-0 bg-black/60 z-50 transition-opacity backdrop-blur-sm" 
+        onClick={onClose} 
+        aria-hidden="true"
+      />
+      <div 
+        role="dialog"
+        aria-modal="true"
+        aria-label="Shopping Cart Drawer"
+        className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-neutral-950 shadow-2xl flex flex-col transform transition-transform duration-300 border-l border-neutral-900"
+      >
         <div className="flex items-center justify-between px-6 py-6 border-b border-neutral-900">
           <h2 className="text-2xl font-serif font-black text-white tracking-widest uppercase">Your Cart</h2>
-          <button onClick={onClose} className="p-2 text-neutral-500 hover:text-white transition-colors">
-            <X className="h-5 w-5" />
+          <button 
+            type="button"
+            onClick={onClose} 
+            aria-label="Close cart"
+            className="p-2 text-neutral-500 hover:text-white transition-colors rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
 
@@ -59,24 +85,28 @@ export function CartDrawer({ isOpen, onClose, cart, updateQuantity, removeFromCa
                         <h3 className="line-clamp-2 leading-snug">{item.name}</h3>
                         <p className="whitespace-nowrap font-serif tracking-tight">₦{(item.price * item.quantity).toLocaleString()}</p>
                       </div>
-                      <p className="mt-1 text-xs text-neutral-500 uppercase tracking-widest">{item.brand} • <span className="text-neutral-600">{item.condition}</span></p>
+                      <p className="mt-1 text-xs text-neutral-400 uppercase tracking-widest">{item.brand} • <span className="text-neutral-300">{item.condition}</span></p>
                     </div>
                     <div className="flex flex-1 items-end justify-between text-sm">
-                      <div className="flex items-center border border-neutral-800 bg-neutral-900 h-8">
+                      <div className="flex items-center border border-neutral-800 bg-neutral-900 h-8 rounded">
                         <button 
+                          type="button"
                           onClick={() => updateQuantity(item.id, -1)}
-                          className="h-full px-3 text-neutral-400 hover:text-white transition-colors flex items-center justify-center"
+                          aria-label={`Decrease quantity of ${item.name}`}
+                          className="h-full px-3 text-neutral-400 hover:text-white transition-colors flex items-center justify-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
                           disabled={item.quantity <= 1}
                         >
-                          <Minus className="h-3 w-3" />
+                          <Minus className="h-3 w-3" aria-hidden="true" />
                         </button>
-                        <span className="px-2 font-bold text-white text-xs">{item.quantity}</span>
+                        <span className="px-2 font-bold text-white text-xs" aria-label={`Quantity: ${item.quantity}`}>{item.quantity}</span>
                         <button 
+                          type="button"
                           onClick={() => updateQuantity(item.id, 1)}
-                          className="h-full px-3 text-neutral-400 hover:text-white transition-colors flex items-center justify-center"
+                          aria-label={`Increase quantity of ${item.name}`}
+                          className="h-full px-3 text-neutral-400 hover:text-white transition-colors flex items-center justify-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
                           disabled={item.quantity >= item.stock}
                         >
-                          <Plus className="h-3 w-3" />
+                          <Plus className="h-3 w-3" aria-hidden="true" />
                         </button>
                       </div>
 
@@ -84,7 +114,8 @@ export function CartDrawer({ isOpen, onClose, cart, updateQuantity, removeFromCa
                         <button 
                           type="button" 
                           onClick={() => removeFromCart(item.id)}
-                          className="font-bold text-neutral-500 hover:text-blue-500 flex items-center transition-colors uppercase tracking-widest text-[10px]"
+                          aria-label={`Remove ${item.name} from cart`}
+                          className="font-bold text-neutral-400 hover:text-rose-400 flex items-center transition-colors uppercase tracking-widest text-[10px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-rose-500 p-1 rounded"
                         >
                           Remove
                         </button>

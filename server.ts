@@ -640,6 +640,105 @@ async function logServerAuditActivity(req: express.Request, action: string, deta
   await logSecurityEvent(req, action, severity, details, explicitEmail);
 }
 
+// ========================================================
+// DEDICATED ADMIN AUTHENTICATION AUDIT LOGGER & MIDDLEWARE
+// ========================================================
+export interface AdminAuthAuditPayload {
+  req: express.Request;
+  action: 'OTP_REQUEST' | 'OTP_VERIFY' | 'PASSKEY_AUTH' | 'TOKEN_VALIDATION' | 'SESSION_VALIDATE' | 'LOGOUT' | string;
+  status: 'SUCCESS' | 'FAILURE';
+  email?: string;
+  method: 'OTP' | 'PASSKEY' | 'BEARER_TOKEN' | 'SESSION' | string;
+  details: string;
+  statusCode?: number;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Dedicated utility function to record granular admin authentication attempts
+ * into the 'admin_audit_logs' collection with exact IP address, timestamp,
+ * User-Agent, authentication method, and result.
+ */
+export async function logAdminAuthAttempt(payload: AdminAuthAuditPayload): Promise<void> {
+  const { req, action, status, email, method, details, statusCode, metadata } = payload;
+  const now = new Date();
+  const timestamp = now.toISOString();
+  const timestampMs = now.getTime();
+
+  const rawIp = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown') as string;
+  const ip = typeof rawIp === 'string' ? rawIp.split(',')[0].trim() : 'unknown';
+  const rawUserAgent = (req.headers['user-agent'] || 'unknown') as string;
+  const userAgent = typeof rawUserAgent === 'string' ? rawUserAgent.substring(0, 300) : 'unknown';
+  const cleanEmail = (email || (req as any)?.admin?.email || 'unknown').toLowerCase().trim();
+  const path = req.originalUrl || req.path || '';
+
+  const logId = `AAL-${timestampMs}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+  const logEntry = {
+    id: logId,
+    action,
+    status, // 'SUCCESS' | 'FAILURE'
+    email: cleanEmail,
+    ip,
+    userAgent,
+    path,
+    method,
+    details,
+    statusCode: statusCode || (status === 'SUCCESS' ? 200 : 401),
+    timestamp,
+    timestampMs,
+    metadata: metadata || null
+  };
+
+  // Structured console log for GCP / Cloud Run container observability
+  console.log(`[ADMIN_AUDIT_${status}] ${action} (${method}) | Email: ${cleanEmail} | IP: ${ip} | Details: ${details}`);
+
+  // Update in-memory security metrics
+  if (status === 'SUCCESS') {
+    threatStats.authSuccessCount++;
+  } else {
+    threatStats.authFailureCount++;
+  }
+
+  // Persist directly to dedicated 'admin_audit_logs' collection in Firestore
+  const db = getFirebaseDb();
+  if (db) {
+    try {
+      await setDoc(doc(db, 'admin_audit_logs', logId), logEntry);
+    } catch (err: any) {
+      console.warn('Failed to write to admin_audit_logs collection:', err.message);
+    }
+  }
+}
+
+/**
+ * Express middleware to automatically track and log completed admin route executions
+ */
+export const adminAuditMiddleware = (actionName: string, authMethod: string = 'BEARER_TOKEN') => {
+  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const originalJson = res.json.bind(res);
+    res.json = function (body: any) {
+      const statusCode = res.statusCode;
+      const isSuccess = statusCode >= 200 && statusCode < 400 && body?.success !== false && body?.valid !== false && !body?.error;
+      const adminEmail = (req as any)?.admin?.email || req.body?.email;
+
+      logAdminAuthAttempt({
+        req,
+        action: actionName,
+        status: isSuccess ? 'SUCCESS' : 'FAILURE',
+        email: adminEmail,
+        method: authMethod,
+        details: body?.message || body?.error || (isSuccess ? `${actionName} executed successfully` : `${actionName} rejected`),
+        statusCode,
+        metadata: { path: req.originalUrl }
+      }).catch(err => console.error('adminAuditMiddleware logging error:', err.message));
+
+      return originalJson(body);
+    };
+    next();
+  };
+};
+
 // Suspicious Traffic, Scraper & Malicious Signature Detector Middleware
 app.use(async (req, res, next) => {
   threatStats.totalScans++;
@@ -1040,6 +1139,15 @@ const verifyAdminToken = async (req: express.Request, res: express.Response, nex
 
     if (!isAuthorized) {
       logSecurityEvent(req, 'ADMIN_ACCESS_DENIED', 'HIGH', `Unauthorized admin access attempt by ${decoded.email}`, decoded.email);
+      logAdminAuthAttempt({
+        req,
+        action: 'TOKEN_VALIDATION',
+        status: 'FAILURE',
+        email: decoded.email,
+        method: 'BEARER_TOKEN',
+        details: `Access forbidden: ${decoded.email} is not an authorized administrator`,
+        statusCode: 403
+      }).catch(e => console.error(e));
       return res.status(403).json({ error: 'Forbidden: Admin access required.' });
     }
     
@@ -1050,6 +1158,14 @@ const verifyAdminToken = async (req: express.Request, res: express.Response, nex
     next();
   } catch (err: any) {
     logSecurityEvent(req, 'ADMIN_INVALID_TOKEN', 'WARN', `Invalid administrative token presentation: ${err.message}`);
+    logAdminAuthAttempt({
+      req,
+      action: 'TOKEN_VALIDATION',
+      status: 'FAILURE',
+      method: 'BEARER_TOKEN',
+      details: `Invalid or expired administrative token: ${err.message}`,
+      statusCode: 401
+    }).catch(e => console.error(e));
     return res.status(401).json({ error: 'Invalid or expired administrative token.' });
   }
 };
@@ -2443,13 +2559,21 @@ app.patch('/api/admin/products/batch-stock', verifyAdminToken, async (req, res) 
 });
 
 // 7. ADMIN: AUTHENTICATE SYSTEM ACCESS
-app.post('/api/admin/authenticate', authLimiter, (req, res) => {
+app.post('/api/admin/authenticate', authLimiter, async (req, res) => {
   const { key } = req.body;
   const configuredKey = process.env.ADMIN_KEY;
   
   // Guard against default insecure passkeys in production
   if (isProduction && (!configuredKey || configuredKey === 'admin123')) {
     logSecurityEvent(req, 'ADMIN_PASSKEY_INSECURE', 'CRITICAL', 'Passkey authentication attempt rejected: ADMIN_KEY must be set to a secure custom value in production.');
+    await logAdminAuthAttempt({
+      req,
+      action: 'PASSKEY_AUTH',
+      status: 'FAILURE',
+      method: 'PASSKEY',
+      details: 'Passkey login rejected: ADMIN_KEY is insecure or unset in production environment',
+      statusCode: 503
+    });
     return res.status(503).json({ 
       success: false, 
       message: 'Passkey login is disabled in production until a secure ADMIN_KEY is configured in server environment variables.' 
@@ -2458,6 +2582,14 @@ app.post('/api/admin/authenticate', authLimiter, (req, res) => {
 
   const effectiveKey = configuredKey || (!isProduction ? 'admin123' : null);
   if (!effectiveKey) {
+    await logAdminAuthAttempt({
+      req,
+      action: 'PASSKEY_AUTH',
+      status: 'FAILURE',
+      method: 'PASSKEY',
+      details: 'Administrator passkey is not configured on the server',
+      statusCode: 503
+    });
     return res.status(503).json({ success: false, message: 'Administrator passkey is not configured.' });
   }
 
@@ -2469,9 +2601,26 @@ app.post('/api/admin/authenticate', authLimiter, (req, res) => {
   if (key === effectiveKey) {
     const token = jwt.sign({ role: 'admin', email: PRIMARY_ADMIN_EMAIL }, JWT_SECRET, { expiresIn: '12h' });
     logSecurityEvent(req, 'ADMIN_PASSKEY_SUCCESS', 'INFO', `Admin passkey authentication successful for ${PRIMARY_ADMIN_EMAIL}`);
+    await logAdminAuthAttempt({
+      req,
+      action: 'PASSKEY_AUTH',
+      status: 'SUCCESS',
+      email: PRIMARY_ADMIN_EMAIL,
+      method: 'PASSKEY',
+      details: `Administrator authenticated successfully via passkey as ${PRIMARY_ADMIN_EMAIL}`,
+      statusCode: 200
+    });
     return res.json({ success: true, token });
   }
   logSecurityEvent(req, 'ADMIN_PASSKEY_FAILED', 'WARN', 'Failed administrator passkey attempt');
+  await logAdminAuthAttempt({
+    req,
+    action: 'PASSKEY_AUTH',
+    status: 'FAILURE',
+    method: 'PASSKEY',
+    details: 'Incorrect administrator passkey attempt presented',
+    statusCode: 401
+  });
   return res.status(401).json({ success: false, message: 'Incorrect Administrator Passkey.' });
 });
 
@@ -4328,6 +4477,15 @@ app.post('/api/admin/send-otp', async (req, res) => {
 
     if (!adminSnap.exists()) {
       await logSecurityEvent(req, 'ADMIN_UNAUTHORIZED_ACCESS', 'HIGH', `Unauthorized email attempted admin OTP: ${email}`, email);
+      await logAdminAuthAttempt({
+        req,
+        action: 'OTP_REQUEST',
+        status: 'FAILURE',
+        email,
+        method: 'OTP',
+        details: `Unauthorized email attempted admin OTP request: ${email}`,
+        statusCode: 403
+      });
       return res.status(403).json({ success: false, message: 'Unauthorized email' });
     }
   } catch (err: any) {
@@ -4358,6 +4516,15 @@ app.post('/api/admin/send-otp', async (req, res) => {
   try {
     await sendEmail(email, subject, html);
     await logSecurityEvent(req, 'ADMIN_OTP_REQUESTED', 'INFO', `Admin OTP generated and sent to ${email}`, email);
+    await logAdminAuthAttempt({
+      req,
+      action: 'OTP_REQUEST',
+      status: 'SUCCESS',
+      email,
+      method: 'OTP',
+      details: `Admin access OTP generated and dispatched to ${email}`,
+      statusCode: 200
+    });
     if (!process.env.SMTP_HOST || !process.env.SMTP_USER) {
       if (isProduction) {
         console.error('CRITICAL: Admin OTP requested but SMTP is not configured in production.');
@@ -4389,6 +4556,15 @@ app.post('/api/admin/verify-otp', async (req, res) => {
     }
     if (!adminSnap.exists()) {
       await logSecurityEvent(req, 'ADMIN_UNAUTHORIZED_ACCESS', 'HIGH', `Unauthorized email attempted OTP verify: ${email}`, email);
+      await logAdminAuthAttempt({
+        req,
+        action: 'OTP_VERIFY',
+        status: 'FAILURE',
+        email,
+        method: 'OTP',
+        details: `Unauthorized email attempted OTP verification: ${email}`,
+        statusCode: 403
+      });
       return res.status(403).json({ success: false, message: 'Unauthorized' });
     }
   } catch (err) {
@@ -4398,12 +4574,32 @@ app.post('/api/admin/verify-otp', async (req, res) => {
   const docId = getDocId(email);
   try {
     const snap = await getDoc(doc(fbDb, 'admin_otps', docId));
-    if (!snap.exists()) return res.status(400).json({ success: false, message: 'No OTP' });
+    if (!snap.exists()) {
+      await logAdminAuthAttempt({
+        req,
+        action: 'OTP_VERIFY',
+        status: 'FAILURE',
+        email,
+        method: 'OTP',
+        details: `No pending OTP found for ${email}`,
+        statusCode: 400
+      });
+      return res.status(400).json({ success: false, message: 'No OTP' });
+    }
     
     const record = snap.data();
     if (Date.now() > record.expires) {
       await deleteDoc(doc(fbDb, 'admin_otps', docId));
       await logSecurityEvent(req, 'ADMIN_OTP_EXPIRED', 'WARN', `Expired OTP used by ${email}`, email);
+      await logAdminAuthAttempt({
+        req,
+        action: 'OTP_VERIFY',
+        status: 'FAILURE',
+        email,
+        method: 'OTP',
+        details: `Expired OTP presented for ${email}`,
+        statusCode: 400
+      });
       return res.status(400).json({ success: false, message: 'Expired' });
     }
 
@@ -4418,11 +4614,29 @@ app.post('/api/admin/verify-otp', async (req, res) => {
       await setDoc(doc(fbDb, 'admin_sessions', sessionDocId), { ip, userAgent });
       await logServerAuditActivity(req, 'LOGIN_SUCCESS', `Administrator logged in successfully`, email);
       await logSecurityEvent(req, 'ADMIN_LOGIN_SUCCESS', 'INFO', `Administrator authenticated successfully via OTP`, email);
+      await logAdminAuthAttempt({
+        req,
+        action: 'OTP_VERIFY',
+        status: 'SUCCESS',
+        email,
+        method: 'OTP',
+        details: `Administrator authenticated successfully via OTP for ${email}`,
+        statusCode: 200
+      });
       
       const token = jwt.sign({ userId: dId, email, role: 'admin' }, JWT_SECRET, { expiresIn: '12h' });
       return res.json({ success: true, token });
     } else {
       await logSecurityEvent(req, 'ADMIN_LOGIN_FAILED', 'HIGH', `Invalid admin OTP code attempt for ${email}`, email);
+      await logAdminAuthAttempt({
+        req,
+        action: 'OTP_VERIFY',
+        status: 'FAILURE',
+        email,
+        method: 'OTP',
+        details: `Invalid OTP code entered for ${email}`,
+        statusCode: 400
+      });
       return res.status(400).json({ success: false, message: 'Invalid OTP' });
     }
   } catch (e) {
@@ -4446,7 +4660,18 @@ app.post('/api/admin/validate-session', async (req, res) => {
   const sessionDocId = getDocId(email + "_session");
   try {
     const snap = await getDoc(doc(fbDb, 'admin_sessions', sessionDocId));
-    if (!snap.exists()) return res.json({ valid: false });
+    if (!snap.exists()) {
+      await logAdminAuthAttempt({
+        req,
+        action: 'SESSION_VALIDATE',
+        status: 'FAILURE',
+        email,
+        method: 'SESSION',
+        details: `No active session found in database for ${email}`,
+        statusCode: 401
+      });
+      return res.json({ valid: false });
+    }
     
     const session = snap.data();
     const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
@@ -4454,10 +4679,29 @@ app.post('/api/admin/validate-session', async (req, res) => {
 
     if (session.ip !== ip || session.userAgent !== userAgent) {
       await deleteDoc(doc(fbDb, 'admin_sessions', sessionDocId));
+      await logAdminAuthAttempt({
+        req,
+        action: 'SESSION_VALIDATE',
+        status: 'FAILURE',
+        email,
+        method: 'SESSION',
+        details: `Session revoked due to IP/User-Agent fingerprint change`,
+        statusCode: 401,
+        metadata: { expectedIp: session.ip, currentIp: ip }
+      });
       return res.json({ valid: false });
     }
 
     const adminToken = jwt.sign({ userId: dId, email, role: 'admin' }, JWT_SECRET, { expiresIn: '12h' });
+    await logAdminAuthAttempt({
+      req,
+      action: 'SESSION_VALIDATE',
+      status: 'SUCCESS',
+      email,
+      method: 'SESSION',
+      details: `Active administrative session validated successfully for ${email}`,
+      statusCode: 200
+    });
     return res.json({ valid: true, token: adminToken });
   } catch (e) {
     return res.json({ valid: false });
@@ -4474,10 +4718,42 @@ app.post('/api/admin/logout', async (req, res) => {
         await deleteDoc(doc(fbDb, 'admin_sessions', sessionDocId));
         await logServerAuditActivity(req, 'LOGOUT', `Administrator logged out successfully`, email);
         await logSecurityEvent(req, 'ADMIN_LOGOUT', 'INFO', `Administrator logged out session`, email);
+        await logAdminAuthAttempt({
+          req,
+          action: 'LOGOUT',
+          status: 'SUCCESS',
+          email,
+          method: 'SESSION',
+          details: `Administrator session terminated on logout for ${email}`,
+          statusCode: 200
+        });
       } catch(e) {}
     }
   }
   res.json({ success: true });
+});
+
+// GET DEDICATED ADMIN AUTH AUDIT LOGS
+app.get('/api/admin/audit-logs', verifyAdminToken, async (req, res) => {
+  const db = getFirebaseDb();
+  if (!db) {
+    return res.status(500).json({ success: false, message: 'Database is offline' });
+  }
+
+  try {
+    const limitCount = Math.min(100, Math.max(1, parseInt(req.query.limit as string || '50', 10)));
+    const logsRef = collection(db, 'admin_audit_logs');
+    const snap = await getDocs(logsRef);
+    const logs = snap.docs
+      .map(d => d.data())
+      .sort((a: any, b: any) => (b.timestampMs || 0) - (a.timestampMs || 0))
+      .slice(0, limitCount);
+
+    return res.json({ success: true, count: logs.length, logs });
+  } catch (err: any) {
+    console.error('Error fetching admin_audit_logs:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to retrieve audit logs: ' + err.message });
+  }
 });
 
 // Admin Security Metrics & Status Endpoint
