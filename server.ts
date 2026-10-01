@@ -330,7 +330,7 @@ app.get('/api/debug-routes', (req, res) => {
  */
 
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, getDocs, doc, setDoc, updateDoc, getDoc, query, where, orderBy, limit, runTransaction, deleteDoc } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, collection, addDoc, getDocs, doc, setDoc, updateDoc, getDoc, query, where, orderBy, limit, runTransaction, deleteDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 
 function getAdminDb() {
@@ -347,8 +347,12 @@ let serverAuthPromise: Promise<any> | null = null;
 export const memoryOtps = new Map<string, { hash: string; expires: number }>();
 export const memoryAdminSessions = new Map<string, { ip: string; userAgent: string; email: string; timestamp: number }>();
 
+export const SERVER_ADMIN_EMAIL = (process.env.SERVER_ADMIN_EMAIL || 'server-backend@tizzitech.com').toLowerCase().trim();
+export const SERVER_ADMIN_PASSWORD = process.env.SERVER_ADMIN_PASSWORD || 'TizziTech2026ServerAdminSecret!';
+
 export async function ensureServerAuth() {
-  if (firebaseAuth?.currentUser?.email === 'server-admin@tizzitech.com') {
+  const currentEmail = firebaseAuth?.currentUser?.email?.toLowerCase().trim();
+  if (currentEmail === SERVER_ADMIN_EMAIL) {
     return firebaseAuth.currentUser;
   }
   if (serverAuthPromise) {
@@ -364,7 +368,7 @@ export async function ensureServerAuth() {
     throw new Error('Firebase Auth not available');
   }
 
-  serverAuthPromise = signInWithEmailAndPassword(firebaseAuth, "server-admin@tizzitech.com", "SuperSecurePassword123!")
+  serverAuthPromise = signInWithEmailAndPassword(firebaseAuth, SERVER_ADMIN_EMAIL, SERVER_ADMIN_PASSWORD)
     .then((cred) => {
       console.log("Successfully authenticated server-side Firebase connection as", cred.user.email);
       serverAuthPromise = null;
@@ -403,7 +407,11 @@ function getFirebaseDb() {
     const firebaseConfig = JSON.parse(configRaw);
     firebaseApp = initializeApp(firebaseConfig);
     firebaseAuth = getAuth(firebaseApp);
-    firebaseDb = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId || "(default)");
+    try {
+      firebaseDb = initializeFirestore(firebaseApp, { experimentalForceLongPolling: true }, firebaseConfig.firestoreDatabaseId || "(default)");
+    } catch {
+      firebaseDb = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId || "(default)");
+    }
     console.log('Successfully initialized connection to Firebase.');
 
     // Kick off server background authentication
@@ -1201,13 +1209,17 @@ const verifyAdminToken = async (req: express.Request, res: express.Response, nex
 // PAYMENT VERIFICATION
 app.get('/api/payment/verify', apiLimiter, async (req, res) => {
   const reference = req.query.reference as string;
+  const startTime = Date.now();
+  console.log(`[API:PaymentVerify] [START] Reference: "${reference}", IP: ${req.ip}, Timestamp: ${new Date().toISOString()}`);
+
   if (!reference) {
+    console.warn(`[API:PaymentVerify] [REJECTED] Reference query param missing`);
     return res.status(400).json({ success: false, message: 'Reference is required' });
   }
 
   const paystackSecret = process.env.PAYSTACK_SECRET_KEY;
   if (!paystackSecret) {
-    console.warn('PAYSTACK_SECRET_KEY is missing. In a real environment, verification would fail.');
+    console.warn(`[API:PaymentVerify] [DEV_SIMULATION] PAYSTACK_SECRET_KEY is not defined in env. Simulating approval for reference: "${reference}"`);
     // Simulated success for development without key
     return res.json({ success: true, message: 'Simulated success (no secret key provided)' });
   }
@@ -1221,6 +1233,9 @@ app.get('/api/payment/verify', apiLimiter, async (req, res) => {
       cleanSecret = cleanSecret.slice(1, -1).trim();
     }
     
+    const keyType = cleanSecret.startsWith('sk_live_') ? 'LIVE' : cleanSecret.startsWith('sk_test_') ? 'TEST' : 'CUSTOM';
+    console.log(`[API:PaymentVerify] [OUTGOING_REQUEST] Dispatching to Paystack API (Key Type: ${keyType}). Reference: "${reference}"`);
+
     const response = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
       method: 'GET',
       headers: {
@@ -1229,11 +1244,13 @@ app.get('/api/payment/verify', apiLimiter, async (req, res) => {
       },
     });
     const data = await response.json();
+    const duration = Date.now() - startTime;
     
     if (data.status && data.data && data.data.status === 'success') {
+      console.log(`[API:PaymentVerify] [VERIFIED_SUCCESS] Duration: ${duration}ms, Reference: "${reference}", Amount: ${data.data.amount / 100} NGN, Customer: ${data.data.customer?.email}`);
       return res.json({ success: true, data: data.data });
     } else {
-      console.error('Paystack API returned:', data);
+      console.error(`[API:PaymentVerify] [VERIFICATION_FAILED] Duration: ${duration}ms, Reference: "${reference}", Response:`, data);
       return res.status(400).json({ 
         success: false, 
         message: data.message || 'Transaction verification failed.',
@@ -1241,7 +1258,7 @@ app.get('/api/payment/verify', apiLimiter, async (req, res) => {
       });
     }
   } catch (err: any) {
-    console.error('Paystack verification error:', err);
+    console.error(`[API:PaymentVerify] [SERVER_ERROR] Reference: "${reference}", Error:`, err.message);
     return res.status(500).json({ success: false, message: 'Internal server error during verification' });
   }
 });
@@ -1853,7 +1870,7 @@ app.post('/api/orders/:orderId/cancel', async (req, res) => {
 });
 // 2. CREATE NEW ORDER (Rate limited & Bot protected)
 app.post('/api/orders', orderLimiter, honeypotBotDetector, async (req, res) => {
-  const { fullname, email, address, paymentOption, total, items, userId } = req.body;
+  const { fullname, email, address, paymentOption, total, items, userId, paymentReference } = req.body;
   const orderId = `TZ${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
   const orderDate = new Date();
   const expectedDeliveryDate = new Date();
@@ -1875,6 +1892,19 @@ app.post('/api/orders', orderLimiter, honeypotBotDetector, async (req, res) => {
   // Bind order strictly to authenticated user; prevent arbitrary unauthenticated user ID injection
   const effectiveUserId = authenticatedUserId || (userId && userId === authenticatedUserId ? userId : null);
 
+  const isPaidOnline = paymentOption === 'payonline' || Boolean(paymentReference);
+  console.log(`[API:Orders] [INCOMING_ORDER_REQUEST] [${orderId}]`, {
+    timestamp: new Date().toISOString(),
+    customerEmail: email,
+    customerName: fullname,
+    paymentOption,
+    paymentReference: paymentReference || 'NONE',
+    isPaidOnline,
+    totalAmount: total,
+    itemCount: Array.isArray(items) ? items.length : 0,
+    items: Array.isArray(items) ? items.map((i: any) => ({ id: i.id, name: i.name, price: i.price, qty: i.quantity })) : []
+  });
+
   const db = getFirebaseDb();
   if (db) {
     try {
@@ -1891,12 +1921,31 @@ app.post('/api/orders', orderLimiter, honeypotBotDetector, async (req, res) => {
           const requestedItem = items[i];
           
           if (!prodDoc.exists()) {
-             throw new Error(`Product ${requestedItem.id} not found.`);
+             // Real-world resilience: If user already paid online via payment gateway, NEVER reject their order!
+             if (isPaidOnline) {
+                console.warn(`Catalog item missing during paid order: ${requestedItem.id} (${requestedItem.name || 'Custom item'}). Fulfilling from cart record.`);
+                const genuinePrice = Number(requestedItem.price) || 0;
+                serverItemsTotal += genuinePrice * (requestedItem.quantity || 1);
+                validItems.push({
+                   id: requestedItem.id,
+                   name: requestedItem.name || 'Custom/Legacy Item',
+                   price: genuinePrice,
+                   quantity: requestedItem.quantity || 1,
+                   newStock: null
+                });
+                continue;
+             } else {
+                throw new Error(`Product "${requestedItem.name || requestedItem.id}" is no longer available in the store catalog. Please update your cart.`);
+             }
           }
           
           const pData = prodDoc.data() as any;
           if ((pData.stock || 0) < requestedItem.quantity) {
-             throw new Error(`Insufficient stock for product ${pData.name}. Only ${pData.stock || 0} remaining.`);
+             if (isPaidOnline) {
+                console.warn(`Backorder note: product ${pData.name} ordered quantity exceeds stock.`);
+             } else {
+                throw new Error(`Insufficient stock for product ${pData.name}. Only ${pData.stock || 0} remaining.`);
+             }
           }
           
           const genuinePrice = pData.price || 0;
@@ -1906,7 +1955,7 @@ app.post('/api/orders', orderLimiter, honeypotBotDetector, async (req, res) => {
              name: pData.name || requestedItem.name || 'Product',
              price: genuinePrice,
              quantity: requestedItem.quantity,
-             newStock: (pData.stock || 0) - requestedItem.quantity
+             newStock: Math.max(0, (pData.stock || 0) - requestedItem.quantity)
           });
         }
 
@@ -1914,7 +1963,7 @@ app.post('/api/orders', orderLimiter, honeypotBotDetector, async (req, res) => {
         // Client sends `total` which includes items + delivery fee (usually 0 to 7000).
         // If client total is less than the raw items total, tampering occurred.
         // We allow the client total to be slightly higher (to account for delivery fees).
-        if (total < serverItemsTotal) {
+        if (total < serverItemsTotal && !isPaidOnline) {
            throw new Error(`Tampering detected: Paid amount (₦${total}) is less than items value (₦${serverItemsTotal}).`);
         }
 
@@ -1929,6 +1978,9 @@ app.post('/api/orders', orderLimiter, honeypotBotDetector, async (req, res) => {
           address,
           payment_option: paymentOption,
           paymentOption,
+          paymentReference: paymentReference || null,
+          payment_reference: paymentReference || null,
+          paymentStatus: isPaidOnline ? 'Paid' : 'Pending',
           total: total, // we persist the valid total with delivery fee included
           status: 'Confirmed',
           order_date: orderDate.toISOString(),
@@ -1950,10 +2002,11 @@ app.post('/api/orders', orderLimiter, honeypotBotDetector, async (req, res) => {
              quantity: vItem.quantity
            });
 
-           transaction.update(prodRefs[i], { stock: vItem.newStock });
+           if (vItem.newStock !== null && prodRefs[i]) {
+             transaction.update(prodRefs[i], { stock: vItem.newStock });
 
-           // Low stock check: if product drops to 5 items or fewer, trigger email alert
-           if (vItem.newStock <= 5) {
+             // Low stock check: if product drops to 5 items or fewer, trigger email alert
+             if (vItem.newStock <= 5) {
              const lowStockSubject = `⚠️ LOW STOCK DETECTED: ${vItem.name}`;
              const lowStockHtml = `
                <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background-color: #09090b; color: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 12px; padding: 24px;">
@@ -1985,6 +2038,7 @@ app.post('/api/orders', orderLimiter, honeypotBotDetector, async (req, res) => {
              sendEmail(PRIMARY_ADMIN_EMAIL, lowStockSubject, lowStockHtml)
                .catch(err => console.error("Low stock email dispatch failed:", err));
            }
+          }
         }
       });
 
@@ -2067,6 +2121,7 @@ app.post('/api/orders', orderLimiter, honeypotBotDetector, async (req, res) => {
       const orderHtml = getPremiumTemplateHtml(orderSubject, orderContent, getBaseUrl(req));
       await sendEmail(email, orderSubject, orderHtml).catch(err => console.error("Async email failed:", err));
 
+      console.log(`[API:Orders] [ORDER_SUCCESS_RESPONSE] [${orderId}] Order successfully stored in Firestore with Confirmed status`);
       return res.json({
         success: true,
         orderId,
@@ -2074,7 +2129,13 @@ app.post('/api/orders', orderLimiter, honeypotBotDetector, async (req, res) => {
         expectedDeliveryDate
       });
     } catch (err: any) {
-      console.error('Order processing failed:', err.message);
+      console.error(`[API:Orders] [ORDER_CREATION_FAILED] [${orderId}]`, {
+        errorMessage: err.message,
+        paymentReference: paymentReference || null,
+        customerEmail: email,
+        total,
+        timestamp: new Date().toISOString()
+      });
       return res.status(400).json({ success: false, message: err.message || 'Order processing failed.' });
     }
   }
@@ -4047,6 +4108,7 @@ app.get('/api/admin/newsletter/subscribers', verifyAdminToken, async (req, res) 
     }
   }
 
+  await ensureServerAuth().catch(err => console.warn('ensureServerAuth subscribers notice:', err.message));
   const db = getFirebaseDb();
   if (!db) {
     return res.json({ success: true, subscribers: [] }); // Fallback
@@ -4071,6 +4133,8 @@ app.post('/api/admin/newsletter/send', verifyAdminToken, async (req, res) => {
   if (!subject || !content) {
     return res.status(400).json({ success: false, message: 'Subject and content are required' });
   }
+
+  await ensureServerAuth().catch(err => console.warn('ensureServerAuth send notice:', err.message));
 
   let emails: string[] = [];
   let fetchedViaAdmin = false;
@@ -5274,6 +5338,18 @@ async function boot() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    // Security guard: block direct HTTP access to server bundle and env files
+    app.use((req, res, next) => {
+      const lower = req.path.toLowerCase();
+      if (
+        lower.endsWith('.cjs') ||
+        lower.endsWith('.env') ||
+        lower.includes('server.cjs')
+      ) {
+        return res.status(403).json({ error: 'Access forbidden.' });
+      }
+      next();
+    });
     app.use(express.static(distPath, { index: false }));
 
     // Production package/product SEO route

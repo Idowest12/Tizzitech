@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AdminDashboard } from './components/AdminDashboard';
+import { AdminSessionLockOverlay } from './components/AdminSessionLockOverlay';
 import { Product, Order } from './types';
 import { Lock, ShieldAlert, KeyRound, ArrowLeft } from 'lucide-react';
 import { auth } from './firebase';
@@ -17,6 +18,8 @@ export default function AdminApp() {
   const [adminEmail, setAdminEmail] = useState('');
   const [otpSuccessMsg, setOtpSuccessMsg] = useState('');
   const [isResending, setIsResending] = useState(false);
+  const [isSessionLocked, setIsSessionLocked] = useState(false);
+  const [lockedInactiveSeconds, setLockedInactiveSeconds] = useState(300);
 
   const [error, setError] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
@@ -234,35 +237,54 @@ export default function AdminApp() {
   };
 
 
-  // Auto-logout after 10 minutes of inactivity
+  // Active session protection: lock screen after 5 minutes of inactivity
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    let timeoutId;
+    let lockTimeoutId: any;
+    let fullLogoutTimeoutId: any;
 
-    const resetTimer = () => {
-      clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => {
+    const resetActivity = () => {
+      if (isSessionLocked) return; // Do not reset timer while locked
+
+      clearTimeout(lockTimeoutId);
+      clearTimeout(fullLogoutTimeoutId);
+
+      // Trigger visual lock overlay after 5 minutes of inactivity (300,000 ms)
+      lockTimeoutId = setTimeout(() => {
+        setIsSessionLocked(true);
+        setLockedInactiveSeconds(300);
+        logAuditActivity('SESSION_AUTO_LOCKED', 'Admin session locked after 5 minutes of inactivity', adminEmail);
+      }, 5 * 60 * 1000);
+
+      // Trigger full logout safety backstop after 30 minutes of total inactivity
+      fullLogoutTimeoutId = setTimeout(() => {
         handleLogout();
-      }, 10 * 60 * 1000); // 10 minutes
+      }, 30 * 60 * 1000);
     };
 
-    resetTimer();
+    resetActivity();
 
-    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
-    const handleActivity = () => resetTimer();
+    const events = ['mousedown', 'mousemove', 'keypress', 'keydown', 'scroll', 'touchstart'];
+    const handleActivity = () => resetActivity();
     
     events.forEach((event) => {
-      document.addEventListener(event, handleActivity);
+      window.addEventListener(event, handleActivity, { passive: true });
     });
 
     return () => {
-      clearTimeout(timeoutId);
+      clearTimeout(lockTimeoutId);
+      clearTimeout(fullLogoutTimeoutId);
       events.forEach((event) => {
-        document.removeEventListener(event, handleActivity);
+        window.removeEventListener(event, handleActivity);
       });
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, isSessionLocked, adminEmail]);
+
+  const handleUnlockSession = () => {
+    setIsSessionLocked(false);
+    logAuditActivity('SESSION_RESUMED', 'Admin session re-authenticated and resumed', adminEmail);
+  };
 
 const handleUpdateStock = async (id: string, newStock: number) => {
     try {
@@ -578,6 +600,15 @@ if (!isAuthenticated) {
           }}
         />
       </div>
+
+      {isSessionLocked && (
+        <AdminSessionLockOverlay
+          adminEmail={adminEmail}
+          inactiveSeconds={lockedInactiveSeconds}
+          onUnlock={handleUnlockSession}
+          onLogout={handleLogout}
+        />
+      )}
     </div>
   );
 }

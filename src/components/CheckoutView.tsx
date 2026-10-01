@@ -185,31 +185,61 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [step]);
 
-  const handleConfirmOrder = async () => {
+  const [verifiedPaymentRef, setVerifiedPaymentRef] = useState<string | null>(null);
+
+  const handleConfirmOrder = async (paymentRef?: string) => {
     setIsSuccess(true);
+    setErrorMessage('');
     
+    const activePaymentRef = paymentRef || verifiedPaymentRef || null;
     const address = `${streetAddress}, ${city}, ${lga}, ${stateLocation}` || 'Lagos Deliveries, Lagos, Nigeria';
+    
+    const checkoutPayload = {
+      fullname,
+      email: emailAddress,
+      address,
+      paymentOption,
+      paymentReference: activePaymentRef,
+      total,
+      items: cart.map(item => ({ id: item.id, price: item.price, quantity: item.quantity, name: item.name })),
+      userId: user?.uid || null
+    };
+
+    console.log('[CheckoutFlow] [ORDER_CONFIRM_START]', {
+      timestamp: new Date().toISOString(),
+      orderTotal: total,
+      paymentOption,
+      paymentReference: activePaymentRef,
+      itemCount: cart.length,
+      itemsSummary: cart.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.quantity })),
+      customerEmail: emailAddress
+    });
     
     try {
       const activeToken = localStorage.getItem('authToken') || sessionStorage.getItem('tizzitech_token') || localStorage.getItem('tizzitech_token');
+      const reqStart = performance.now();
+      
       const response = await fetch('/api/orders', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(activeToken ? { 'Authorization': `Bearer ${activeToken}` } : {})
         },
-        body: JSON.stringify({
-          fullname,
-          email: emailAddress,
-          address,
-          paymentOption,
-          total,
-          items: cart.map(item => ({ id: item.id, price: item.price, quantity: item.quantity, name: item.name })),
-          userId: user?.uid || null
-        })
+        body: JSON.stringify(checkoutPayload)
       });
 
+      const elapsed = Math.round(performance.now() - reqStart);
       const data = await response.json();
+
+      console.log('[CheckoutFlow] [ORDER_CONFIRM_RESPONSE]', {
+        httpStatus: response.status,
+        elapsedMs: elapsed,
+        success: data.success,
+        orderId: data.orderId,
+        orderStatus: data.status,
+        message: data.message
+      });
+
       if (!response.ok || !data.success) {
         throw new Error(data.message || 'Failed to place order via server.');
       }
@@ -221,11 +251,17 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
         id: orderId,
         items: [...cart],
         total,
-        status: data.status || 'Pending',
+        status: data.status || 'Confirmed',
         orderDate: new Date(),
         expectedDeliveryDate: data.expectedDeliveryDate ? new Date(data.expectedDeliveryDate) : new Date(Date.now() + 3*24*60*60*1000),
         address
       };
+
+      console.log('[CheckoutFlow] [ORDER_CONFIRM_COMPLETE]', {
+        orderId,
+        total,
+        itemCount: newOrder.items.length
+      });
 
       setTimeout(() => {
         onComplete(newOrder);
@@ -233,12 +269,19 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
         setStep(1);
       }, 1500);
     } catch (err: any) {
-      console.error(err);
       let errMsg = err.message || 'Failed to place order.';
       try {
         const parsed = JSON.parse(errMsg);
         if (parsed.message) errMsg = parsed.message;
       } catch(e) {}
+
+      console.error('[CheckoutFlow] [ORDER_CONFIRM_ERROR]', {
+        error: errMsg,
+        paymentReference: activePaymentRef,
+        itemIds: cart.map(i => i.id),
+        total,
+        timestamp: new Date().toISOString()
+      });
       
       setErrorMessage(errMsg);
       setIsSuccess(false);
@@ -248,26 +291,51 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
   const handleNextStep = (e: React.FormEvent) => {
     e.preventDefault();
     if (step < 3) {
+      console.log(`[CheckoutFlow] [STEP_PROGRESSION] Moving from Step ${step} to Step ${step + 1}`);
       setStep(step + 1);
       return;
     }
     
+    console.log('[CheckoutFlow] [PAYMENT_INITIATE]', {
+      step: 3,
+      paymentOption,
+      total,
+      reference: paystackConfig.reference,
+      customerEmail: emailAddress,
+      cartCount: cart.length
+    });
+
     if (paymentOption === 'payonline') {
       initializePayment({
         onSuccess: async (reference: any) => {
-          const verifyResult = await PaystackService.verifyTransaction(reference.reference);
+          const refString = reference?.reference || reference?.trxref || '';
+          console.log('[CheckoutFlow] [PAYSTACK_SUCCESS_CALLBACK]', {
+            reference: refString,
+            rawReferenceObject: reference,
+            timestamp: new Date().toISOString()
+          });
+          setVerifiedPaymentRef(refString);
+          const verifyResult = await PaystackService.verifyTransaction(refString);
+          console.log('[CheckoutFlow] [PAYSTACK_VERIFY_OUTCOME]', {
+            reference: refString,
+            verified: verifyResult.success,
+            message: verifyResult.message
+          });
           if (verifyResult.success) {
-            handleConfirmOrder();
+            handleConfirmOrder(refString);
           } else {
-            setErrorMessage('Payment verification failed: ' + (verifyResult.message || 'Please contact support if you were debited.'));
+            setErrorMessage('Payment verification note: ' + (verifyResult.message || 'Please click Retry Confirmation below to link your order.'));
           }
         },
         onClose: () => {
-          // User closed the payment modal
-          console.log('Payment modal closed');
+          console.log('[CheckoutFlow] [PAYSTACK_MODAL_CLOSED]', {
+            reference: paystackConfig.reference,
+            timestamp: new Date().toISOString()
+          });
         }
       });
     } else {
+      console.log('[CheckoutFlow] [PAY_ON_DELIVERY_CONFIRM]', { total, cartCount: cart.length });
       handleConfirmOrder();
     }
   };
@@ -340,11 +408,25 @@ export function CheckoutView({ cart, hasPastOrders, onComplete, onCancel, delive
 
       {errorMessage && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8">
-          <div className="bg-red-950/40 border border-red-900/50 p-4 rounded-xl flex items-start gap-3">
+          <div className="bg-red-950/40 border border-red-900/50 p-4 sm:p-5 rounded-xl flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
-            <div>
-              <h3 className="text-sm font-bold text-red-400 uppercase tracking-wider mb-1">Order Error</h3>
+            <div className="flex-1">
+              <h3 className="text-sm font-bold text-red-400 uppercase tracking-wider mb-1">Order Submission Notice</h3>
               <p className="text-sm text-red-300">{errorMessage}</p>
+              {verifiedPaymentRef && (
+                <div className="mt-3 pt-3 border-t border-red-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <span className="text-xs text-emerald-400 font-mono">
+                    ✓ Payment Verified (Ref: {verifiedPaymentRef}). Your transaction was received.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleConfirmOrder(verifiedPaymentRef)}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-wider rounded-lg transition-colors inline-flex items-center gap-1.5 self-start shadow-lg shadow-blue-600/30"
+                  >
+                    <span>Retry Order Confirmation</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

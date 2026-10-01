@@ -961,11 +961,22 @@ export default function App() {
           <CheckoutView cart={cart} deliveryZones={deliveryZones}
             hasPastOrders={orders.length > 0}
             onComplete={(newOrder) => {
+              console.log('[CheckoutSequence] [App.tsx:onComplete]', {
+                orderId: newOrder.id,
+                total: newOrder.total,
+                status: newOrder.status,
+                itemCount: newOrder.items?.length,
+                timestamp: new Date().toISOString()
+              });
               setOrders((prev) => [newOrder, ...prev]);
               setCart([]);
+              localStorage.removeItem('tizzitech_cart');
               setView("tracking");
             }}
-            onCancel={() => setView("store")}
+            onCancel={() => {
+              console.log('[CheckoutSequence] [App.tsx:onCancel] User exited checkout; returning to store view');
+              setView("store");
+            }}
           />
         ) : view === "tracking" ? (
           <div className="relative z-10 pt-8 pb-16">

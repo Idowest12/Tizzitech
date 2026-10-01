@@ -51,12 +51,19 @@ export class PaystackService {
   }
 
   static async verifyTransaction(reference: string): Promise<{success: boolean, message?: string}> {
+    const startTime = performance.now();
+    console.log(`[PaystackService] [VERIFY_START] Reference: "${reference}", Timestamp: ${new Date().toISOString()}`);
     try {
-      const response = await fetch(`/api/payment/verify?reference=${reference}`);
+      const response = await fetch(`/api/payment/verify?reference=${encodeURIComponent(reference)}`);
+      const elapsed = Math.round(performance.now() - startTime);
+      console.log(`[PaystackService] [VERIFY_RESPONSE] HTTP ${response.status}, Elapsed: ${elapsed}ms`);
+      
       const data = await response.json();
+      console.log(`[PaystackService] [VERIFY_RESULT] Success: ${data.success}, Reference: "${reference}", Message: "${data.message || 'ok'}"`);
       return { success: data.success, message: data.message };
     } catch (error: any) {
-      console.error('Error verifying transaction:', error);
+      const elapsed = Math.round(performance.now() - startTime);
+      console.error(`[PaystackService] [VERIFY_ERROR] Reference: "${reference}", Elapsed: ${elapsed}ms, Error:`, error.message);
       return { success: false, message: error.message };
     }
   }

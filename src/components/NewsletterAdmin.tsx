@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Mail, CheckCircle, AlertCircle, RefreshCw, Send, Users, Image as ImageIcon, Download, Sparkles, Phone, ShieldCheck, Tag, TrendingUp, UserX, Zap, ShoppingBag } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+import { collection, onSnapshot, getDocs } from 'firebase/firestore';
+import { db } from '../firebase';
 
 interface Subscriber {
   id: string;
@@ -139,6 +141,8 @@ export function NewsletterAdmin() {
   const fetchSubscribers = async () => {
     setLoading(true);
     setError(null);
+    let loadedFromApi = false;
+
     try {
       const token = sessionStorage.getItem('tizzitech_admin_token') || '';
       const res = await fetch('/api/admin/newsletter/subscribers', {
@@ -147,20 +151,48 @@ export function NewsletterAdmin() {
         }
       });
       const data = await res.json();
-      if (data.success) {
+      if (data.success && Array.isArray(data.subscribers)) {
         setSubscribers(data.subscribers);
-      } else {
-        setError(data.message || data.error || 'Failed to fetch subscribers');
+        loadedFromApi = true;
+        setLoading(false);
+        return;
       }
     } catch (err: any) {
-      setError(err.message);
+      console.warn("Backend subscriber fetch notice:", err.message);
     }
-    setLoading(false);
+
+    if (!loadedFromApi) {
+      try {
+        const snap = await getDocs(collection(db, 'newsletter_subscribers'));
+        const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subscriber));
+        setSubscribers(list);
+        setError(null);
+      } catch (err: any) {
+        console.error("Direct Firestore subscriber fetch error:", err);
+        setError(err.message || 'Failed to fetch subscribers');
+      } finally {
+        setLoading(false);
+      }
+    }
   };
 
   useEffect(() => {
     fetchSubscribers();
     fetchInactiveCount();
+
+    // Real-time listener for instant subscriber updates
+    const unsub = onSnapshot(collection(db, 'newsletter_subscribers'), (snap) => {
+      const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subscriber));
+      if (list.length > 0) {
+        setSubscribers(list);
+        setError(null);
+        setLoading(false);
+      }
+    }, (snapErr) => {
+      console.warn("Live subscriber sync notice:", snapErr.message);
+    });
+
+    return () => unsub();
   }, []);
 
   const exportToCSV = (onlyWaitlist = false) => {
