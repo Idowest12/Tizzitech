@@ -148,14 +148,14 @@ export function Header({
         </a>
 
         {/* Center Navigation Links (Desktop) */}
-        <nav className="hidden md:flex flex-wrap justify-center flex-1 mx-2 items-center gap-2 lg:gap-6 text-[10px] lg:text-sm font-semibold tracking-widest uppercase text-neutral-400">
-          <div className="relative">
+        <nav className="hidden md:flex flex-nowrap justify-center flex-1 mx-2 lg:mx-4 items-center gap-3 lg:gap-5 xl:gap-6 text-xs lg:text-sm font-semibold tracking-wider uppercase text-neutral-400">
+          <div className="relative shrink-0">
             <button
               onClick={() => {
                 setOpenDropdown(openDropdown === "tech" ? null : "tech");
                 onSelectCategory("Tech");
               }}
-              className={`hover:text-white transition-colors flex items-center gap-1 ${openDropdown === "tech" || selectedCategory === "Tech" ? "text-white font-bold" : ""}`}
+              className={`hover:text-white transition-colors flex items-center gap-1 whitespace-nowrap ${openDropdown === "tech" || selectedCategory === "Tech" ? "text-white font-bold" : ""}`}
             >
               Tizzitech Store{" "}
               <ChevronDown
@@ -180,7 +180,7 @@ export function Header({
             )}
           </div>
 
-          <div className="relative">
+          <div className="relative shrink-0">
             <button
               onClick={() => {
                 setOpenDropdown(
@@ -188,7 +188,7 @@ export function Header({
                 );
                 onSelectCategory("Accessories");
               }}
-              className={`hover:text-white transition-colors flex items-center gap-1 ${openDropdown === "accessories" || selectedCategory === "Accessories" ? "text-white font-bold" : ""}`}
+              className={`hover:text-white transition-colors flex items-center gap-1 whitespace-nowrap ${openDropdown === "accessories" || selectedCategory === "Accessories" ? "text-white font-bold" : ""}`}
             >
               Accessories{" "}
               <ChevronDown
@@ -248,27 +248,27 @@ export function Header({
               onOpenTechOfTheDay();
               setOpenDropdown(null);
             }}
-            className="hover:text-white transition-colors whitespace-nowrap"
+            className="hover:text-white transition-colors whitespace-nowrap shrink-0"
           >
             Tech of the day
           </button>
           <button
             onClick={handleAboutClick}
-            className="hover:text-white transition-colors"
+            className="hover:text-white transition-colors whitespace-nowrap shrink-0"
           >
             About
           </button>
           <button
             onClick={handleTrackingClick}
-            className="hover:text-white transition-colors whitespace-nowrap"
+            className="hover:text-white transition-colors whitespace-nowrap shrink-0"
           >
             Track Order
           </button>
         </nav>
 
-        <div className="flex items-center justify-end gap-3 md:gap-4 lg:gap-6 min-w-0">
+        <div className="flex items-center justify-end gap-2.5 sm:gap-3 lg:gap-5 shrink-0 min-w-0">
           {currentView !== "profile" && (
-            <div className="hidden md:block w-32 lg:w-64 shrink">
+            <div className="hidden md:block w-28 lg:w-44 xl:w-56 shrink">
               <div className="relative">
                 <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
                   <Search className="h-4 w-4 text-neutral-500" />
